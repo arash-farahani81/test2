@@ -1142,7 +1142,7 @@ L78: const [useDynamicBomMode, setUseDynamicBomMode] = useLocalStorageState<bool
 L84: const { params: flexParams, plan: flexPlan } = useFlexibleProtocol();
 ```
 
-### `src/components/PhotoDiaryAndVintagePanel.tsx` (1734 lines)
+### `src/components/PhotoDiaryAndVintagePanel.tsx` (1743 lines)
 ```ts
 // --- Imports ---
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -1228,8 +1228,8 @@ L629: const [historicalVintages, setHistoricalVintages] = useLocalStorageState<
 L648: const [visitCount, setVisitCount] = useLocalStorageState<number>(
 L652: const [pwaDismissed, setPwaDismissed] = useLocalStorageState<boolean>(
 L656: const [calendarStartDate, setCalendarStartDate] = useState<string>(() =>
-L852: const [showVintagePassport, setShowVintagePassport] = useState(false);
-L853: const [passportCopied, setPassportCopied] = useState(false);
+L855: const [showVintagePassport, setShowVintagePassport] = useState(false);
+L856: const [passportCopied, setPassportCopied] = useState(false);
 ```
 
 ### `src/components/ProcessRoadmapTracker.tsx` (2073 lines)

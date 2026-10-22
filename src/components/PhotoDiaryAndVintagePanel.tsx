@@ -594,7 +594,7 @@ export function exportWorkshopCalendarICS(startDateIso: string): string {
 export const PhotoDiaryAndVintagePanel: React.FC<
   PhotoDiaryAndVintagePanelProps
 > = ({ tankId = 'tank-a' }) => {
-  const { activeBatch } = useEnologyUi();
+  const { activeBatch, dataVersion } = useEnologyUi();
   const [photos, setPhotos] = useState<PhotoDiaryEntry[]>([]);
   const [photoError, setPhotoError] = useState<string | null>(null);
   const [photoCategory, setPhotoCategory] = useState<
@@ -808,8 +808,11 @@ export const PhotoDiaryAndVintagePanel: React.FC<
   const currentBatchMetrics = useMemo(() => {
     const batches = enologyDb.getBatches();
     const b = activeBatch ?? batches[0];
+    const excludeDemo = b?.isDemo === false || !enologyDb.hasDemoData();
     const allTankLogs = sortFermentationLogs(
-      enologyDb.getLogs(tankId, false, b?.id).filter((l) => !l.isBenchmark)
+      enologyDb
+        .getLogs(tankId, false, b?.id)
+        .filter((l) => !l.isBenchmark && (!excludeDemo || !l.isDemo))
     );
     const first = allTankLogs[0];
     const last = allTankLogs[allTankLogs.length - 1];
@@ -821,7 +824,7 @@ export const PhotoDiaryAndVintagePanel: React.FC<
       undefined,
       undefined,
       undefined,
-      false,
+      excludeDemo,
       b?.id
     );
     const tastingValues = Object.values(tastingsByCheckpoint);
@@ -847,7 +850,7 @@ export const PhotoDiaryAndVintagePanel: React.FC<
       totalAddedSo2MgL: so2Ledger.addedFromKmsMgL,
       avgTastingScore: `${avgScore} / 5`
     };
-  }, [tankId, activeBatch, tastingsByCheckpoint]);
+  }, [tankId, activeBatch, tastingsByCheckpoint, dataVersion]);
 
   const [showVintagePassport, setShowVintagePassport] = useState(false);
   const [passportCopied, setPassportCopied] = useState(false);
@@ -867,8 +870,14 @@ export const PhotoDiaryAndVintagePanel: React.FC<
   const vintagePassport = useMemo(() => {
     const batches = enologyDb.getBatches();
     const b = activeBatch ?? batches[0];
-    const logs = enologyDb.getLogs(tankId, false, b?.id);
-    const additions = enologyDb.getAdditions(tankId, false, b?.id);
+    const excludeDemo =
+      activeBatch?.isDemo === false || !enologyDb.hasDemoData();
+    const logs = enologyDb
+      .getLogs(tankId, false, b?.id)
+      .filter((l) => !excludeDemo || !l.isDemo);
+    const additions = enologyDb
+      .getAdditions(tankId, false, b?.id)
+      .filter((a) => !excludeDemo || !a.isDemo);
     return buildVintagePassportSummary({
       tankId,
       batchNameFa: b?.name ?? currentBatchMetrics.titleFa,
@@ -881,7 +890,7 @@ export const PhotoDiaryAndVintagePanel: React.FC<
       wineColorHex: currentTasting.wineColorHex,
       wineColorLabelFa: currentTasting.wineColorLabelFa
     });
-  }, [tankId, activeBatch, currentBatchMetrics, currentTasting]);
+  }, [tankId, activeBatch, currentBatchMetrics, currentTasting, dataVersion]);
 
   return (
     <div className="space-y-4 font-['Vazirmatn',sans-serif]">
