@@ -150,6 +150,154 @@ export function computeSensoryRadarPolygonPoints(
   };
 }
 
+export interface WineGlassLegItem {
+  id: number;
+  x: number;
+  topY: number;
+  bottomY: number;
+  delaySec: number;
+}
+
+export interface WineGlassVisualMetrics {
+  wineColorHex: string;
+  clampedBody: number;
+  clampedAbv: number;
+  legsCount: number;
+  legStrokeWidth: number;
+  legFallDurationSec: number;
+  viscosityLabelFa: string;
+  legs: WineGlassLegItem[];
+}
+
+export function computeWineGlassVisualMetrics(params: {
+  wineColorHex?: string;
+  bodyScore?: number;
+  abvPct?: number;
+}): WineGlassVisualMetrics {
+  const wineColorHex =
+    params.wineColorHex && params.wineColorHex.startsWith('#')
+      ? params.wineColorHex
+      : '#721422';
+  const clampedBody = Math.min(
+    5,
+    Math.max(1, Number.isFinite(params.bodyScore) ? Number(params.bodyScore) : 4)
+  );
+  const clampedAbv = Math.min(
+    16,
+    Math.max(8, Number.isFinite(params.abvPct) ? Number(params.abvPct) : 13.0)
+  );
+  const legsCount = Math.min(
+    9,
+    Math.max(
+      3,
+      Math.round(clampedBody * 1.2 + Math.max(0, clampedAbv - 10) * 0.5)
+    )
+  );
+  const legStrokeWidth = Math.round((1.0 + clampedBody * 0.32) * 10) / 10;
+  const legFallDurationSec = Math.round((2.2 + clampedBody * 0.45) * 10) / 10;
+  const viscosityLabelFa =
+    clampedBody >= 4.5
+      ? 'اشک شراب غلیظ و کشیده (ویسکوزیته بالا)'
+      : clampedBody >= 3.5
+        ? 'اشک شراب متوازن و واضح'
+        : 'اشک شراب سبک و روان';
+
+  const stepX = legsCount > 1 ? 56 / (legsCount - 1) : 0;
+  const legs: WineGlassLegItem[] = [];
+  for (let i = 0; i < legsCount; i++) {
+    legs.push({
+      id: i,
+      x: Math.round((42 + i * stepX) * 10) / 10,
+      topY: 60 + (i % 2) * 4,
+      bottomY: 88,
+      delaySec: Math.round(i * 0.35 * 100) / 100
+    });
+  }
+
+  return {
+    wineColorHex,
+    clampedBody,
+    clampedAbv,
+    legsCount,
+    legStrokeWidth,
+    legFallDurationSec,
+    viscosityLabelFa,
+    legs
+  };
+}
+
+export const EngravedWaxSealStamp: React.FC<{
+  subtitleFa?: string;
+  codeText?: string;
+  className?: string;
+}> = ({ subtitleFa, codeText, className }) => (
+  <svg
+    viewBox="0 0 120 120"
+    data-testid="engraved-wax-seal-svg"
+    className={
+      className ??
+      'w-20 h-20 select-none transition-transform duration-500 scale-100 hover:scale-105'
+    }
+    aria-label="مهر مومی تایید اصالت"
+  >
+    <circle
+      cx="60"
+      cy="60"
+      r="52"
+      fill="#721422"
+      stroke="#4A1230"
+      strokeWidth="4"
+      strokeDasharray="7 3"
+    />
+    <circle
+      cx="60"
+      cy="60"
+      r="44"
+      fill="#8B1E24"
+      stroke="#E4DCCD"
+      strokeWidth="1.2"
+      strokeOpacity="0.65"
+    />
+    <circle
+      cx="60"
+      cy="60"
+      r="37"
+      fill="#6E1F2F"
+      stroke="#F6F1E7"
+      strokeWidth="1"
+      strokeDasharray="3 2"
+      strokeOpacity="0.8"
+    />
+    <text
+      x="60"
+      y="46"
+      textAnchor="middle"
+      fill="#F6F1E7"
+      className="text-xs font-bold tracking-widest"
+    >
+      {codeText ?? 'SOP-1405'}
+    </text>
+    <text
+      x="60"
+      y="64"
+      textAnchor="middle"
+      fill="#F6F1E7"
+      className="text-xs font-bold tracking-wider"
+    >
+      VERIFIED
+    </text>
+    <text
+      x="60"
+      y="80"
+      textAnchor="middle"
+      fill="#F6F1E7"
+      className="text-xs opacity-90"
+    >
+      {subtitleFa ?? 'تایید اصالت'}
+    </text>
+  </svg>
+);
+
 export interface VintagePassportSummary {
   batchNameFa: string;
   vintageYear: number;
@@ -867,6 +1015,24 @@ export const PhotoDiaryAndVintagePanel: React.FC<
     [currentTasting, tankId]
   );
 
+  const activeGlassMetrics = useMemo(
+    () =>
+      computeWineGlassVisualMetrics({
+        wineColorHex:
+          currentTasting.wineColorHex ??
+          (tankId === 'tank-rose' ? '#E88D72' : '#721422'),
+        bodyScore: currentTasting.body ?? currentTasting.appearance ?? 4,
+        abvPct: currentBatchMetrics.finalAbvPct
+      }),
+    [
+      currentTasting.wineColorHex,
+      currentTasting.body,
+      currentTasting.appearance,
+      tankId,
+      currentBatchMetrics.finalAbvPct
+    ]
+  );
+
   const vintagePassport = useMemo(() => {
     const batches = enologyDb.getBatches();
     const b = activeBatch ?? batches[0];
@@ -1149,94 +1315,205 @@ export const PhotoDiaryAndVintagePanel: React.FC<
             </div>
           </div>
 
-          <div className="lg:col-span-5 flex flex-col items-center justify-center bg-surface border border-line rounded-xl p-2">
-            <svg
-              viewBox="0 0 220 220"
-              className="w-48 h-48 overflow-visible"
-              aria-label="نمودار راداری ۵ محوری چشایی"
-            >
-              {[0.2, 0.6, 1].map((scale) => {
-                const ring = computeSensoryRadarPolygonPoints(
-                  {
-                    aroma: 5 * scale,
-                    acidity: 5 * scale,
-                    tannin: 5 * scale,
-                    body: 5 * scale,
-                    balance: 5 * scale
-                  },
-                  110,
-                  110,
-                  78
-                );
-                return (
-                  <polygon
-                    key={scale}
-                    points={ring.polygonPoints}
-                    fill="none"
-                    stroke="currentColor"
-                    className="text-line"
-                    strokeWidth="1"
-                    strokeDasharray={scale < 1 ? '2 2' : undefined}
-                  />
-                );
-              })}
-              {radarData.vertices.map((v) => {
-                const outer = computeSensoryRadarPolygonPoints(
-                  { aroma: 5, acidity: 5, tannin: 5, body: 5, balance: 5 },
-                  110,
-                  110,
-                  78
-                ).vertices.find((ov) => ov.axisKey === v.axisKey);
-                return (
-                  <g key={v.axisKey}>
-                    <line
-                      x1={110}
-                      y1={110}
-                      x2={outer?.x ?? v.x}
-                      y2={outer?.y ?? v.y}
+          <div className="lg:col-span-5 grid grid-cols-1 sm:grid-cols-2 gap-3 items-center bg-surface border border-line rounded-xl p-2.5">
+            <div className="flex flex-col items-center justify-center">
+              <svg
+                viewBox="0 0 220 220"
+                className="w-44 h-44 overflow-visible"
+                aria-label="نمودار راداری ۵ محوری چشایی"
+              >
+                {[0.2, 0.6, 1].map((scale) => {
+                  const ring = computeSensoryRadarPolygonPoints(
+                    {
+                      aroma: 5 * scale,
+                      acidity: 5 * scale,
+                      tannin: 5 * scale,
+                      body: 5 * scale,
+                      balance: 5 * scale
+                    },
+                    110,
+                    110,
+                    78
+                  );
+                  return (
+                    <polygon
+                      key={scale}
+                      points={ring.polygonPoints}
+                      fill="none"
                       stroke="currentColor"
                       className="text-line"
                       strokeWidth="1"
+                      strokeDasharray={scale < 1 ? '2 2' : undefined}
                     />
-                    <text
-                      x={v.labelX}
-                      y={v.labelY}
-                      textAnchor="middle"
-                      dominantBaseline="middle"
-                      className="fill-current text-ink text-xs font-bold"
-                    >
-                      {v.labelFa}
-                    </text>
-                  </g>
-                );
-              })}
-              <polygon
-                data-testid="sensory-radar-polygon"
-                points={radarData.polygonPoints}
-                fill={
-                  currentTasting.wineColorHex ??
-                  (tankId === 'tank-rose' ? '#B8293D' : '#580F24')
-                }
-                fillOpacity={0.28}
-                stroke={
-                  currentTasting.wineColorHex ??
-                  (tankId === 'tank-rose' ? '#B8293D' : '#580F24')
-                }
-                strokeWidth="2"
-              />
-              {radarData.vertices.map((v) => (
-                <circle
-                  key={`dot-${v.axisKey}`}
-                  cx={v.x}
-                  cy={v.y}
-                  r="3.5"
+                  );
+                })}
+                {radarData.vertices.map((v) => {
+                  const outer = computeSensoryRadarPolygonPoints(
+                    { aroma: 5, acidity: 5, tannin: 5, body: 5, balance: 5 },
+                    110,
+                    110,
+                    78
+                  ).vertices.find((ov) => ov.axisKey === v.axisKey);
+                  return (
+                    <g key={v.axisKey}>
+                      <line
+                        x1={110}
+                        y1={110}
+                        x2={outer?.x ?? v.x}
+                        y2={outer?.y ?? v.y}
+                        stroke="currentColor"
+                        className="text-line"
+                        strokeWidth="1"
+                      />
+                      <text
+                        x={v.labelX}
+                        y={v.labelY}
+                        textAnchor="middle"
+                        dominantBaseline="middle"
+                        className="fill-current text-ink text-xs font-bold"
+                      >
+                        {v.labelFa}
+                      </text>
+                    </g>
+                  );
+                })}
+                <polygon
+                  data-testid="sensory-radar-polygon"
+                  points={radarData.polygonPoints}
                   fill={
                     currentTasting.wineColorHex ??
                     (tankId === 'tank-rose' ? '#B8293D' : '#580F24')
                   }
+                  fillOpacity={0.28}
+                  stroke={
+                    currentTasting.wineColorHex ??
+                    (tankId === 'tank-rose' ? '#B8293D' : '#580F24')
+                  }
+                  strokeWidth="2"
                 />
-              ))}
-            </svg>
+                {radarData.vertices.map((v) => (
+                  <circle
+                    key={`dot-${v.axisKey}`}
+                    cx={v.x}
+                    cy={v.y}
+                    r="3.5"
+                    fill={
+                      currentTasting.wineColorHex ??
+                      (tankId === 'tank-rose' ? '#B8293D' : '#580F24')
+                    }
+                  />
+                ))}
+              </svg>
+            </div>
+
+            {/* Interactive Crystal Wine Glass & Marangoni Legs SVG (Golden Idea 1) */}
+            <div className="flex flex-col items-center justify-center text-center space-y-1">
+              <svg
+                viewBox="0 0 140 190"
+                data-testid="interactive-wine-glass-svg"
+                className="w-36 h-48 mx-auto"
+                aria-label="گیلاس کریستال و شبیه‌ساز اشک شراب"
+              >
+                <defs>
+                  <clipPath id="crystal-bowl-clip">
+                    <path d="M 34 26 C 26 68 30 108 70 116 C 110 108 114 68 106 26 Z" />
+                  </clipPath>
+                </defs>
+                <g clipPath="url(#crystal-bowl-clip)">
+                  {/* Wine liquid body */}
+                  <path
+                    d="M 24 88 Q 47 84 70 88 T 116 88 L 116 122 L 24 122 Z"
+                    style={{
+                      fill: activeGlassMetrics.wineColorHex,
+                      transition: 'fill 400ms ease'
+                    }}
+                    fillOpacity="0.9"
+                  />
+                  {/* Sine-wave surface meniscus highlight */}
+                  <path
+                    d="M 30 88 Q 50 84 70 88 T 110 88"
+                    fill="none"
+                    stroke="#ffffff"
+                    strokeOpacity="0.55"
+                    strokeWidth="1.8"
+                  />
+                  {/* Marangoni wine legs / tears above liquid surface */}
+                  {activeGlassMetrics.legs.map((leg) => (
+                    <g key={leg.id}>
+                      <line
+                        x1={leg.x}
+                        y1={leg.topY}
+                        x2={leg.x}
+                        y2={leg.bottomY}
+                        stroke={activeGlassMetrics.wineColorHex}
+                        strokeOpacity="0.55"
+                        strokeWidth={activeGlassMetrics.legStrokeWidth}
+                        strokeLinecap="round"
+                      />
+                      <circle
+                        cx={leg.x}
+                        cy={leg.topY}
+                        r={Math.max(
+                          1.5,
+                          activeGlassMetrics.legStrokeWidth * 0.85
+                        )}
+                        fill={activeGlassMetrics.wineColorHex}
+                      >
+                        <animate
+                          attributeName="cy"
+                          values={`${leg.topY};${leg.bottomY};${leg.topY}`}
+                          dur={`${activeGlassMetrics.legFallDurationSec}s`}
+                          begin={`${leg.delaySec}s`}
+                          repeatCount="indefinite"
+                        />
+                      </circle>
+                    </g>
+                  ))}
+                </g>
+                {/* Crystal bowl rim & contour */}
+                <path
+                  d="M 34 26 C 26 68 30 108 70 116 C 110 108 114 68 106 26"
+                  fill="none"
+                  stroke="#6b625a"
+                  strokeWidth="2"
+                />
+                <ellipse
+                  cx="70"
+                  cy="26"
+                  rx="36"
+                  ry="5"
+                  fill="none"
+                  stroke="#6b625a"
+                  strokeWidth="1.5"
+                />
+                {/* Glass stem */}
+                <line
+                  x1="70"
+                  y1="116"
+                  x2="70"
+                  y2="168"
+                  stroke="#6b625a"
+                  strokeWidth="3"
+                />
+                {/* Crystal foot */}
+                <ellipse
+                  cx="70"
+                  cy="170"
+                  rx="28"
+                  ry="5"
+                  fill="none"
+                  stroke="#6b625a"
+                  strokeWidth="2"
+                />
+              </svg>
+              <div className="text-xs font-bold text-ink">
+                {activeGlassMetrics.viscosityLabelFa}
+              </div>
+              <div className="text-xs font-mono font-bold text-wine ltr-metric">
+                {activeGlassMetrics.legsCount} Legs •{' '}
+                {currentBatchMetrics.finalAbvPct.toFixed(1)}% ABV
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1595,17 +1872,20 @@ export const PhotoDiaryAndVintagePanel: React.FC<
                   {vintagePassport.varietyAndOriginFa} | {vintagePassport.tankLabelFa}
                 </div>
               </div>
-              <div className="flex items-center gap-2 bg-surface border border-line rounded-xl px-3 py-2 self-start">
-                <span
-                  className="w-5 h-5 rounded-full border border-white/50 shrink-0"
-                  style={{ backgroundColor: vintagePassport.wineColorHex }}
-                />
-                <div>
-                  <div className="text-xs text-ink-soft">طیف رنگ ثبت‌شده</div>
-                  <div className="text-xs font-bold text-ink">
-                    {vintagePassport.wineColorLabelFa}
+              <div className="flex items-center gap-3 self-start">
+                <div className="flex items-center gap-2 bg-surface border border-line rounded-xl px-3 py-2">
+                  <span
+                    className="w-5 h-5 rounded-full border border-white/50 shrink-0"
+                    style={{ backgroundColor: vintagePassport.wineColorHex }}
+                  />
+                  <div>
+                    <div className="text-xs text-ink-soft">طیف رنگ ثبت‌شده</div>
+                    <div className="text-xs font-bold text-ink">
+                      {vintagePassport.wineColorLabelFa}
+                    </div>
                   </div>
                 </div>
+                <EngravedWaxSealStamp subtitleFa="شناسنامه وینتیج" />
               </div>
             </div>
 

@@ -24,7 +24,8 @@ import {
   calculateDynamicSGTriggers,
   calculateH2O2SulfiteRemoval,
   calculateStagedH2O2Plan,
-  buildCalculatorDirectAdditions
+  buildCalculatorDirectAdditions,
+  computeGraduatedSyringeMetrics
 } from './enologyUtils.ts';
 import {
   IDEAL_DEFAULT_PROTOCOL_PARAMS,
@@ -470,3 +471,24 @@ test('Idea 2: buildCalculatorDirectAdditions constructs structured additions for
   }
 });
 
+test('computeGraduatedSyringeMetrics: auto-selects barrelCapacityMl (1, 5, 50) and computes plungerX, fillRatio, and 6 majorTicks (Golden Idea 5)', () => {
+  const s1 = computeGraduatedSyringeMetrics(0.65);
+  assert.equal(s1.barrelCapacityMl, 1);
+  assert.equal(s1.plungerX, Math.round((34 + s1.liquidWidth) * 10) / 10);
+  assert.ok(s1.fillRatio >= 0 && s1.fillRatio <= 1);
+  assert.equal(s1.majorTicks.length, 6);
+  assert.equal(s1.majorTicks[0].ml, 0);
+  assert.equal(s1.majorTicks[5].ml, 1);
+
+  const s5 = computeGraduatedSyringeMetrics(3.8);
+  assert.equal(s5.barrelCapacityMl, 5);
+  assert.equal(s5.plungerX, Math.round((34 + s5.liquidWidth) * 10) / 10);
+  assert.equal(s5.majorTicks.length, 6);
+  assert.equal(s5.majorTicks[5].ml, 5);
+
+  const s50 = computeGraduatedSyringeMetrics(26.2);
+  assert.equal(s50.barrelCapacityMl, 50);
+  assert.equal(s50.plungerX, Math.round((34 + s50.liquidWidth) * 10) / 10);
+  assert.equal(s50.majorTicks.length, 6);
+  assert.equal(s50.majorTicks[5].ml, 50);
+});

@@ -59,6 +59,8 @@ import {
   calculateH2O2SulfiteRemoval,
   estimateAcidOrBaseFromPHShift,
   calculateStagedH2O2Plan,
+  calculateStockSolutionPlan,
+  computeGraduatedSyringeMetrics,
   buildCalculatorDirectAdditions,
   type CalculatorDirectDoseKind
 } from '../utils/enologyUtils.ts';
@@ -103,6 +105,120 @@ function mapTestIdToSopFilter(testId?: string): string {
   }
 }
 
+const StockSolutionSyringeSvg: React.FC<{
+  volumeMl: number;
+  labelFa: string;
+  subtitleFa?: string;
+  liquidColorHex?: string;
+}> = ({ volumeMl, labelFa, subtitleFa, liquidColorHex }) => {
+  const metrics = computeGraduatedSyringeMetrics(volumeMl);
+  return (
+    <div className="rounded-xl border border-line bg-paper p-3 mt-2 text-xs space-y-1.5">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <span className="font-bold text-ink">{labelFa}</span>
+        <span className="ltr-metric font-bold text-wine">
+          {metrics.volumeMl} mL / {metrics.barrelCapacityMl} mL
+        </span>
+      </div>
+      {subtitleFa && <p className="text-ink-soft leading-relaxed">{subtitleFa}</p>}
+      <svg
+        viewBox="0 0 230 52"
+        data-testid="stock-solution-syringe-svg"
+        className="w-full h-14 overflow-visible"
+        aria-label={labelFa}
+      >
+        {/* Needle tip & hub */}
+        <line
+          x1="8"
+          y1="24"
+          x2="26"
+          y2="24"
+          stroke="#6b625a"
+          strokeWidth="1.8"
+        />
+        <rect
+          x="26"
+          y="19"
+          width="8"
+          height="10"
+          rx="1.5"
+          fill="#e4dccd"
+          stroke="#6b625a"
+          strokeWidth="1.2"
+        />
+        {/* Barrel body */}
+        <rect
+          x="34"
+          y="10"
+          width="140"
+          height="28"
+          rx="3"
+          fill="#fbf9f4"
+          stroke="#6b625a"
+          strokeWidth="1.5"
+        />
+        {/* Filled liquid column */}
+        <rect
+          x="34"
+          y="11"
+          width={metrics.liquidWidth}
+          height="26"
+          fill={liquidColorHex ?? '#6e1f2f'}
+          fillOpacity="0.78"
+          style={{ transition: 'width 260ms ease' }}
+        />
+        {/* Rubber plunger stopper & rod */}
+        <rect
+          x={metrics.plungerX}
+          y="10"
+          width="6"
+          height="28"
+          rx="1.5"
+          fill="#1f1a17"
+          style={{ transition: 'x 260ms ease' }}
+        />
+        <line
+          x1={metrics.plungerX + 6}
+          y1="24"
+          x2="214"
+          y2="24"
+          stroke="#6b625a"
+          strokeWidth="3"
+        />
+        <rect
+          x="214"
+          y="13"
+          width="5"
+          height="22"
+          rx="2"
+          fill="#6b625a"
+        />
+        {/* Graduation ticks */}
+        {metrics.majorTicks.map((t) => (
+          <g key={t.ml}>
+            <line
+              x1={t.x}
+              y1="10"
+              x2={t.x}
+              y2="17"
+              stroke="#1f1a17"
+              strokeWidth="1.2"
+            />
+            <text
+              x={t.x}
+              y="48"
+              textAnchor="middle"
+              className="text-xs fill-current text-ink-soft font-mono"
+            >
+              {t.ml}
+            </text>
+          </g>
+        ))}
+      </svg>
+    </div>
+  );
+};
+
 export const TestingGuide: React.FC<TestingGuideProps> = ({
   onNavigateToTracking,
   initialSelectedTest = 'all',
@@ -116,12 +232,14 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
     activeBatchId,
     targetTankIds,
     selectedTankLabelFa,
+    scalePrecision,
     notifyDataChanged
   } = useEnologyUi();
   const [activeSubTab, setActiveSubTab] = useState<LabHubSubTab>(initialActiveSubTab);
   const [selectedFilter, setSelectedFilter] = useState<string>(() =>
     mapTestIdToSopFilter(initialSelectedTest)
   );
+  const [focusedHaloTestId, setFocusedHaloTestId] = useState<string | null>(null);
   const [selectedWizardOverride, setSelectedWizardOverride] = useState<
     'ripper_so2' | 'ph_meter' | 'ta_titration' | 'mlf_chromatography' | 'hydrometer_temp' | undefined
   >(undefined);
@@ -694,6 +812,13 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
       setSelectedFilter(mappedSop);
       if (mappedSop !== 'all') {
         setExpandedTests((prev) => ({ ...prev, [mappedSop]: true }));
+        setFocusedHaloTestId(mappedSop);
+        setTimeout(() => {
+          document
+            .getElementById('lab-test-card-' + mappedSop)
+            ?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+        }, 80);
+        setTimeout(() => setFocusedHaloTestId(null), 2500);
       }
       if (
         labDeepLink.testId === 'ripper_so2' ||
@@ -1250,7 +1375,14 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
           {/* TOOL 1 (SOP-01): Hydrometer, Brix & Refractometer Calibration     */}
           {/* ----------------------------------------------------------------- */}
           {(selectedFilter === 'all' || selectedFilter === 'sop-01') && (
-            <div className="bg-surface rounded-xl border border-line shadow-xs overflow-hidden">
+            <div
+              id="lab-test-card-sop-01"
+              className={`bg-surface rounded-xl border border-line shadow-xs overflow-hidden ${
+                focusedHaloTestId === 'sop-01'
+                  ? 'ring-2 ring-wine bg-wine/5 shadow-md transition-all duration-500'
+                  : ''
+              }`}
+            >
               <div className="p-4 sm:p-5 bg-paper border-b border-line text-ink flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-surface border border-line flex items-center justify-center text-wine font-bold shrink-0">
@@ -1535,7 +1667,14 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
           {/* TOOL 2 (SOP-02): Titratable Acidity (TA) & Tartaric Addition      */}
           {/* ----------------------------------------------------------------- */}
           {(selectedFilter === 'all' || selectedFilter === 'sop-02') && (
-            <div className="bg-surface rounded-xl border border-line shadow-xs overflow-hidden">
+            <div
+              id="lab-test-card-sop-02"
+              className={`bg-surface rounded-xl border border-line shadow-xs overflow-hidden ${
+                focusedHaloTestId === 'sop-02'
+                  ? 'ring-2 ring-wine bg-wine/5 shadow-md transition-all duration-500'
+                  : ''
+              }`}
+            >
               <div className="p-4 sm:p-5 bg-paper border-b border-line text-ink flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-surface border border-line flex items-center justify-center text-wine font-bold shrink-0">
@@ -1822,7 +1961,14 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
           {/* TOOL 3 (SOP-03): pH Meter Calibration & Bidirectional Adjustment   */}
           {/* ----------------------------------------------------------------- */}
           {(selectedFilter === 'all' || selectedFilter === 'sop-03') && (
-            <div className="bg-surface rounded-xl border border-line shadow-xs overflow-hidden">
+            <div
+              id="lab-test-card-sop-03"
+              className={`bg-surface rounded-xl border border-line shadow-xs overflow-hidden ${
+                focusedHaloTestId === 'sop-03'
+                  ? 'ring-2 ring-wine bg-wine/5 shadow-md transition-all duration-500'
+                  : ''
+              }`}
+            >
               <div className="p-4 sm:p-5 bg-paper border-b border-line text-ink flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-surface border border-line flex items-center justify-center text-wine font-bold shrink-0">
@@ -2126,7 +2272,14 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
           {/* TOOL 4 (SOP-04): Free SO2 Ripper, Molecular SO2 & KMS Calculator   */}
           {/* ----------------------------------------------------------------- */}
           {(selectedFilter === 'all' || selectedFilter === 'sop-04') && (
-            <div className="bg-surface rounded-xl border border-line shadow-xs overflow-hidden">
+            <div
+              id="lab-test-card-sop-04"
+              className={`bg-surface rounded-xl border border-line shadow-xs overflow-hidden ${
+                focusedHaloTestId === 'sop-04'
+                  ? 'ring-2 ring-wine bg-wine/5 shadow-md transition-all duration-500'
+                  : ''
+              }`}
+            >
               <div className="p-4 sm:p-5 bg-paper border-b border-line text-ink flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-surface border border-line flex items-center justify-center text-wine font-bold shrink-0">
@@ -2472,6 +2625,22 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
                       </span>
                     </button>
                   </div>
+
+                  {neededKMS > 0 && (() => {
+                    const kmsStockPlan = calculateStockSolutionPlan(
+                      neededKMS,
+                      scalePrecision,
+                      'kms'
+                    );
+                    return (
+                      <StockSolutionSyringeSvg
+                        volumeMl={kmsStockPlan.syringeVolumeMl}
+                        labelFa="سرنگ مدرج محلول استوک KMS (۱۰٪)"
+                        subtitleFa={kmsStockPlan.instructionFa}
+                        liquidColorHex="#6e1f2f"
+                      />
+                    );
+                  })()}
                 </div>
 
                 {/* BOTTOM HALF: Collapsible SOP */}
@@ -2546,7 +2715,14 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
           {/* TOOL 5 (SOP-05): YAN Budget & 3-Stage SNA Calculator              */}
           {/* ----------------------------------------------------------------- */}
           {(selectedFilter === 'all' || selectedFilter === 'sop-05') && (
-            <div className="bg-surface rounded-xl border border-line shadow-xs overflow-hidden">
+            <div
+              id="lab-test-card-sop-05"
+              className={`bg-surface rounded-xl border border-line shadow-xs overflow-hidden ${
+                focusedHaloTestId === 'sop-05'
+                  ? 'ring-2 ring-wine bg-wine/5 shadow-md transition-all duration-500'
+                  : ''
+              }`}
+            >
               <div className="p-4 sm:p-5 bg-paper border-b border-line text-ink flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-surface border border-line flex items-center justify-center text-wine font-bold shrink-0">
@@ -2979,7 +3155,14 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
           {/* TOOL 6 (SOP-06): Cap Temperature & Thermal Cooling Calculator     */}
           {/* ----------------------------------------------------------------- */}
           {(selectedFilter === 'all' || selectedFilter === 'sop-06') && (
-            <div className="bg-surface rounded-xl border border-line shadow-xs overflow-hidden">
+            <div
+              id="lab-test-card-sop-06"
+              className={`bg-surface rounded-xl border border-line shadow-xs overflow-hidden ${
+                focusedHaloTestId === 'sop-06'
+                  ? 'ring-2 ring-wine bg-wine/5 shadow-md transition-all duration-500'
+                  : ''
+              }`}
+            >
               <div className="p-4 sm:p-5 bg-paper border-b border-line text-ink flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-surface border border-line flex items-center justify-center text-wine font-bold shrink-0">
@@ -3140,7 +3323,14 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
           {/* TOOL 7 (SOP-07): Dryness & Residual Sugar Verification            */}
           {/* ----------------------------------------------------------------- */}
           {(selectedFilter === 'all' || selectedFilter === 'sop-07') && (
-            <div className="bg-surface rounded-xl border border-line shadow-xs overflow-hidden">
+            <div
+              id="lab-test-card-sop-07"
+              className={`bg-surface rounded-xl border border-line shadow-xs overflow-hidden ${
+                focusedHaloTestId === 'sop-07'
+                  ? 'ring-2 ring-wine bg-wine/5 shadow-md transition-all duration-500'
+                  : ''
+              }`}
+            >
               <div className="p-4 sm:p-5 bg-paper border-b border-line text-ink flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-surface border border-line flex items-center justify-center text-wine font-bold shrink-0">
@@ -3266,7 +3456,14 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
           {/* TOOL 8 (SOP-08): Bench Fining (Bentonite) & Copper Sulfate Stock  */}
           {/* ----------------------------------------------------------------- */}
           {(selectedFilter === 'all' || selectedFilter === 'sop-08') && (
-            <div className="bg-surface rounded-xl border border-line shadow-xs overflow-hidden">
+            <div
+              id="lab-test-card-sop-08"
+              className={`bg-surface rounded-xl border border-line shadow-xs overflow-hidden ${
+                focusedHaloTestId === 'sop-08'
+                  ? 'ring-2 ring-wine bg-wine/5 shadow-md transition-all duration-500'
+                  : ''
+              }`}
+            >
               <div className="p-4 sm:p-5 bg-paper border-b border-line text-ink flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-surface border border-line flex items-center justify-center text-wine font-bold shrink-0">
@@ -3522,6 +3719,15 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
                         </span>
                       </button>
                     </div>
+
+                    {copperStock2Ml > 0 && (
+                      <StockSolutionSyringeSvg
+                        volumeMl={copperStock2Ml}
+                        labelFa="سرنگ مدرج محلول استوک ۰.۱٪ سولفات مس (۱ mg/mL)"
+                        subtitleFa="تزریق دقیق بر اساس نتیجه تست ۵ لیوانی"
+                        liquidColorHex="#2563eb"
+                      />
+                    )}
                   </div>
                 </div>
 
@@ -3547,7 +3753,14 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
           {/* TOOL 9 (SOP-09): Batch Mass & Volume Scaling Calculator (400kg)   */}
           {/* ----------------------------------------------------------------- */}
           {(selectedFilter === 'all' || selectedFilter === 'sop-09') && (
-            <div className="bg-surface rounded-xl border border-line shadow-xs overflow-hidden">
+            <div
+              id="lab-test-card-sop-09"
+              className={`bg-surface rounded-xl border border-line shadow-xs overflow-hidden ${
+                focusedHaloTestId === 'sop-09'
+                  ? 'ring-2 ring-wine bg-wine/5 shadow-md transition-all duration-500'
+                  : ''
+              }`}
+            >
               <div className="p-4 sm:p-5 bg-paper border-b border-line text-ink flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-surface border border-line flex items-center justify-center text-wine font-bold shrink-0">

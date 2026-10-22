@@ -43,6 +43,7 @@ import {
 } from '../context/EnologyUiContext.tsx';
 import { BatchOnboardingWizardModal } from './BatchOnboardingWizardModal.tsx';
 import { LivingTankVisualTwin } from './LivingTankVisualTwin.tsx';
+import { EngravedWaxSealStamp } from './PhotoDiaryAndVintagePanel.tsx';
 
 export interface RightNowActionCenterProps {
   activeTankId?: TankId;
@@ -1784,9 +1785,17 @@ export const RightNowActionCenter: React.FC<RightNowActionCenterProps> = ({
                 </button>
               </div>
 
-              {bottlingUnlockedNotice && (
-                <div className="bg-paper border border-ok text-ok rounded-lg p-2.5 text-xs font-medium">
-                  مجوز شروع بطری‌گیری صادر شد. می‌توانید دوز نهایی KMS و اسید اسکوربیک روز ۹۹–۱۰۰ را ثبت نمایید.
+              {(bottlingGate.allBlockingPassed || bottlingUnlockedNotice) && (
+                <div className="bg-paper border border-ok text-ok rounded-lg p-2.5 text-xs font-medium flex items-center justify-between gap-3">
+                  <span>
+                    {bottlingUnlockedNotice
+                      ? 'مجوز شروع بطری‌گیری صادر شد. می‌توانید دوز نهایی KMS و اسید اسکوربیک روز ۹۹–۱۰۰ را ثبت نمایید.'
+                      : 'هر ۴ شرط ایمنی مسدودکننده تأیید شد؛ شراب آمادهٔ بطری‌گذاری ایمن مطابق استاندارد SOP-1405 است.'}
+                  </span>
+                  <EngravedWaxSealStamp
+                    subtitleFa="مجوز بطریگیری"
+                    className="w-16 h-16 shrink-0"
+                  />
                 </div>
               )}
             </div>

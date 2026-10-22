@@ -16,15 +16,19 @@ import type {
 } from '../types/index.ts';
 import { enologyDb } from '../db/enologyDatabase.ts';
 import {
+  calculateKMS,
   calculateMolecularSO2,
-  getContinuousTargetFreeSO2ByPH
+  getContinuousTargetFreeSO2ByPH,
+  getEffectiveLiquidVolume
 } from '../utils/enologyUtils.ts';
 import {
   calculateRecentLogVelocity,
+  compareRealLogsWithBenchmark,
   getCapTemperatureAlertLevel,
   predictFermentationCompletion,
   sortFermentationLogs
 } from '../utils/trackingCalculations.ts';
+import { getEffectiveProtocolPlanForBatch } from '../data/masterProtocolConfig.ts';
 import {
   evaluateRightNowQueue,
   type RightNowMilestone
@@ -56,6 +60,125 @@ const SG_MILESTONE_IDS = [
   'pressing'
 ] as const;
 
+export interface TimeMachineDaySnapshot {
+  dayNumber: number;
+  stageTitle: string;
+  sg: number;
+  benchmarkSG: number;
+  sgDeltaVsBenchmark: number;
+  tempCap: number;
+  ph: number;
+  velocityPerDay: number;
+}
+
+export function computeTimeMachineDaySnapshot(params: {
+  dayNumber: number;
+  logs: FermentationLogEntry[];
+  benchmarkLogs: FermentationLogEntry[];
+  initialSG?: number;
+}): TimeMachineDaySnapshot {
+  const sorted = sortFermentationLogs(
+    params.logs.length > 0 ? params.logs : params.benchmarkLogs
+  );
+  let targetLog = sorted[0];
+  for (const l of sorted) {
+    if (
+      !targetLog ||
+      Math.abs(l.dayNumber - params.dayNumber) <
+        Math.abs(targetLog.dayNumber - params.dayNumber)
+    ) {
+      targetLog = l;
+    }
+  }
+  const targetDay = targetLog?.dayNumber ?? params.dayNumber;
+  let benchLog = params.benchmarkLogs[0];
+  for (const bl of params.benchmarkLogs) {
+    if (
+      !benchLog ||
+      Math.abs(bl.dayNumber - targetDay) <
+        Math.abs(benchLog.dayNumber - targetDay)
+    ) {
+      benchLog = bl;
+    }
+  }
+  const logsUpToDay = sorted.filter((l) => l.dayNumber <= targetDay);
+  const vel = calculateRecentLogVelocity(
+    logsUpToDay.length > 0 ? logsUpToDay : sorted,
+    params.initialSG ?? 1.092
+  ).recentVelocityPerDay;
+
+  const sg = targetLog?.sg ?? 1.092;
+  const benchmarkSG = benchLog?.sg ?? sg;
+
+  return {
+    dayNumber: targetDay,
+    stageTitle: targetLog?.stageTitle ?? 'ثبت روزانه',
+    sg,
+    benchmarkSG,
+    sgDeltaVsBenchmark: Math.round((sg - benchmarkSG) * 1000) / 1000,
+    tempCap: targetLog?.tempCap ?? 22,
+    ph: targetLog?.ph ?? 3.52,
+    velocityPerDay: Math.round(vel * 1000) / 1000
+  };
+}
+
+export interface So2TrajectoryVectorMetrics {
+  currentFreeSo2MgL: number;
+  targetFreeSo2MgL: number;
+  deltaSo2MgL: number;
+  currentMolecularMgL: number;
+  targetMolecularMgL: number;
+  kmsGramsNeeded: number;
+  currentX: number;
+  targetX: number;
+  needsAddition: boolean;
+}
+
+export function computeSo2TrajectoryVector(params: {
+  currentFreeSo2MgL: number;
+  ph: number;
+  isRose: boolean;
+  effectiveVolumeL: number;
+}): So2TrajectoryVectorMetrics {
+  const targetInfo = getContinuousTargetFreeSO2ByPH(params.ph, params.isRose);
+  const currentFreeSo2MgL = Math.max(
+    0,
+    Math.round(params.currentFreeSo2MgL * 10) / 10
+  );
+  const targetFreeSo2MgL = targetInfo.target;
+  const deltaSo2MgL = Math.max(
+    0,
+    Math.round((targetFreeSo2MgL - currentFreeSo2MgL) * 10) / 10
+  );
+  const currentMolecularMgL = calculateMolecularSO2(
+    currentFreeSo2MgL,
+    params.ph
+  );
+  const targetMolecularMgL = targetInfo.targetMolecularMgL;
+  const kmsGramsNeeded = calculateKMS(
+    params.effectiveVolumeL,
+    currentFreeSo2MgL,
+    targetFreeSo2MgL,
+    false
+  );
+  const scaleX = (val: number) =>
+    Math.round(
+      (16 + (Math.min(80, Math.max(0, val)) / 80) * 228) * 10
+    ) / 10;
+
+  return {
+    currentFreeSo2MgL,
+    targetFreeSo2MgL,
+    deltaSo2MgL,
+    currentMolecularMgL,
+    targetMolecularMgL,
+    kmsGramsNeeded,
+    currentX: scaleX(currentFreeSo2MgL),
+    targetX: scaleX(targetFreeSo2MgL),
+    needsAddition: deltaSo2MgL > 0.5
+  };
+}
+
 export const BandedFermentationChartAndSO2Panel: React.FC<
   BandedFermentationChartAndSO2PanelProps
 > = ({ tankId, logs, additions, labAnalyses, onSelectMilestone }) => {
@@ -63,6 +186,7 @@ export const BandedFermentationChartAndSO2Panel: React.FC<
   const [selectedMilestoneId, setSelectedMilestoneId] = useState<string | null>(
     null
   );
+  const [timeMachineDay, setTimeMachineDay] = useState<number | null>(null);
   const [visibleLayers, setVisibleLayers] = useState<Array<'sg' | 'temp' | 'so2'>>(['sg', 'so2']);
 
   const toggleLayer = (layer: 'sg' | 'temp' | 'so2') => {
@@ -187,6 +311,65 @@ export const BandedFermentationChartAndSO2Panel: React.FC<
         (SG_MILESTONE_IDS as readonly string[]).includes(m.id)
       ),
     [rightNowQueue]
+  );
+
+  const benchmarkComparison = useMemo(
+    () => compareRealLogsWithBenchmark(realLogs, benchmarkLogs, tankId),
+    [realLogs, benchmarkLogs, tankId]
+  );
+  const harmonyScore = benchmarkComparison.hasRealLogs
+    ? benchmarkComparison.alignmentScore
+    : 100;
+
+  const batchPlan = useMemo(
+    () => getEffectiveProtocolPlanForBatch(activeBatch),
+    [activeBatch]
+  );
+
+  const referenceVolL = useMemo(() => {
+    if (isRose) {
+      return (latestLog?.sg ?? 1.092) <= 0.995
+        ? batchPlan.volumes.rosePostRackingL
+        : batchPlan.volumes.roseClarifiedFermentL;
+    }
+    const day = latestLog?.dayNumber ?? 0;
+    const sg = latestLog?.sg ?? 1.092;
+    if (day >= 80) return batchPlan.volumes.finalRedPerTankL;
+    if (day >= 10) return batchPlan.volumes.rack1PerTankL;
+    if (sg <= 1.005) return batchPlan.volumes.freeRunPerTankL;
+    return getEffectiveLiquidVolume(
+      batchPlan.volumes.crushedMashPerTankL,
+      true,
+      batchPlan.volumes.saigneePerTankL
+    );
+  }, [isRose, latestLog?.dayNumber, latestLog?.sg, batchPlan.volumes]);
+
+  const so2Trajectory = useMemo(
+    () =>
+      computeSo2TrajectoryVector({
+        currentFreeSo2MgL: latestMeasuredFreeSO2?.value ?? 0,
+        ph: currentPH,
+        isRose,
+        effectiveVolumeL: referenceVolL
+      }),
+    [latestMeasuredFreeSO2?.value, currentPH, isRose, referenceVolL]
+  );
+
+  const activeTimeSnapshot = useMemo(
+    () =>
+      computeTimeMachineDaySnapshot({
+        dayNumber: timeMachineDay ?? (latestLog?.dayNumber ?? 0),
+        logs: activeSeriesLogs,
+        benchmarkLogs,
+        initialSG: activeBatch?.initialSG
+      }),
+    [
+      timeMachineDay,
+      latestLog?.dayNumber,
+      activeSeriesLogs,
+      benchmarkLogs,
+      activeBatch?.initialSG
+    ]
   );
 
   // Check if latest real SG point lies within the [0.70x, 1.40x] time-stretched benchmark band
@@ -402,6 +585,53 @@ export const BandedFermentationChartAndSO2Panel: React.FC<
             <span className="text-xs bg-white/20 px-1.5 py-0.5 rounded-full">فعال</span>
           )}
         </button>
+
+        {/* Golden Curve Harmony Ring SVG (Golden Idea 8) */}
+        <div className="mr-auto flex items-center gap-2 bg-paper border border-line rounded-xl px-2.5 py-1">
+          <svg
+            viewBox="0 0 44 44"
+            data-testid="golden-curve-harmony-ring-svg"
+            className="w-11 h-11 shrink-0"
+            aria-label="امتیاز هماهنگی با منحنی طلایی سردشت"
+          >
+            <circle
+              cx="22"
+              cy="22"
+              r="17"
+              stroke="#e4dccd"
+              strokeWidth="4"
+              fill="none"
+            />
+            <circle
+              cx="22"
+              cy="22"
+              r="17"
+              stroke="#3f6b4a"
+              strokeWidth="4"
+              fill="none"
+              strokeDasharray="106.8"
+              strokeDashoffset={
+                Math.round(106.8 * (1 - harmonyScore / 100) * 10) / 10
+              }
+              strokeLinecap="round"
+              transform="rotate(-90 22 22)"
+            />
+            <text
+              x="22"
+              y="25"
+              textAnchor="middle"
+              className="text-xs font-bold fill-current text-ink font-mono"
+            >
+              {harmonyScore}%
+            </text>
+          </svg>
+          <div className="text-xs">
+            <div className="font-bold text-ink">هماهنگی با منحنی طلایی سردشت</div>
+            <div className="text-ink-soft font-mono">
+              {harmonyScore >= 85 ? 'منطبق با مرجع' : 'انحراف جزئی'}
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* =================================================================== */}
@@ -593,6 +823,92 @@ export const BandedFermentationChartAndSO2Panel: React.FC<
                 </span>
               )}
             </div>
+
+            {/* Interactive What-If SO2 Trajectory Vector SVG (Golden Idea 6) */}
+            <div className="pt-2 border-t border-line space-y-1">
+              <svg
+                viewBox="0 0 260 58"
+                data-testid="so2-trajectory-vector-svg"
+                className="w-full h-16 mt-1 rounded-lg border border-line bg-paper p-1"
+                aria-label="بردار ارتقاء حفاظت مولکولی سولفیت"
+              >
+                <line
+                  x1="16"
+                  y1="38"
+                  x2="244"
+                  y2="38"
+                  stroke="#d6d3d1"
+                  strokeWidth="3"
+                  strokeLinecap="round"
+                />
+                {(() => {
+                  const minX =
+                    16 + (Math.min(80, continuousSo2Target.min) / 80) * 228;
+                  const maxX =
+                    16 + (Math.min(80, continuousSo2Target.max) / 80) * 228;
+                  return (
+                    <rect
+                      x={minX}
+                      y={32}
+                      width={Math.max(6, maxX - minX)}
+                      height={12}
+                      rx={3}
+                      fill="rgba(16, 185, 129, 0.25)"
+                      stroke="#059669"
+                      strokeWidth="1"
+                    />
+                  );
+                })()}
+                {so2Trajectory.needsAddition && (
+                  <path
+                    d={`M ${so2Trajectory.currentX} 38 Q ${
+                      (so2Trajectory.currentX + so2Trajectory.targetX) / 2
+                    } 10 ${so2Trajectory.targetX} 38`}
+                    fill="none"
+                    stroke="#3f6b4a"
+                    strokeWidth="2"
+                    strokeDasharray="4 3"
+                  />
+                )}
+                <circle
+                  cx={so2Trajectory.currentX}
+                  cy={38}
+                  r={4.5}
+                  fill="#7A1C32"
+                />
+                <circle
+                  cx={so2Trajectory.targetX}
+                  cy={38}
+                  r={5}
+                  fill="#3f6b4a"
+                  stroke="#ffffff"
+                  strokeWidth="1.5"
+                />
+                <text
+                  x={so2Trajectory.currentX}
+                  y={52}
+                  textAnchor="middle"
+                  fontSize="7.5"
+                  className="fill-current text-ink-soft font-mono"
+                >
+                  فعلی: {so2Trajectory.currentFreeSo2MgL}
+                </text>
+                <text
+                  x={so2Trajectory.targetX}
+                  y={52}
+                  textAnchor="middle"
+                  fontSize="7.5"
+                  className="fill-current text-ok font-mono font-bold"
+                >
+                  هدف: {so2Trajectory.targetFreeSo2MgL}
+                </text>
+              </svg>
+              <div className="text-xs font-bold text-ink">
+                بردار ارتقاء حفاظت مولکولی: افزودن +{so2Trajectory.kmsGramsNeeded} g KMS ← هدف{' '}
+                {so2Trajectory.targetFreeSo2MgL} mg/L ({so2Trajectory.targetMolecularMgL}{' '}
+                mg/L مولکولی)
+              </div>
+            </div>
           </div>
 
           <div className="text-xs font-mono text-ink-soft">
@@ -678,6 +994,76 @@ export const BandedFermentationChartAndSO2Panel: React.FC<
         {/* Main SG SVG Chart */}
         {visibleLayers.includes('sg') && (
         <>
+        {/* Interactive Time-Machine Chart Scrubber (Golden Idea 7) */}
+        <div
+          data-testid="fermentation-time-machine-bar"
+          className="rounded-xl border border-line bg-paper p-2.5 mb-2 text-xs space-y-2"
+        >
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <span className="font-bold text-ink">
+              سفر در زمان روی منحنی تخمیر (روز {activeTimeSnapshot.dayNumber} —{' '}
+              {activeTimeSnapshot.stageTitle})
+            </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() =>
+                  setTimeMachineDay(
+                    Math.max(0, activeTimeSnapshot.dayNumber - 1)
+                  )
+                }
+                className="px-2 py-0.5 rounded bg-surface border border-line font-bold text-ink cursor-pointer"
+              >
+                -1 روز
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  setTimeMachineDay(
+                    Math.min(
+                      Math.max(1, latestLog?.dayNumber ?? 1),
+                      activeTimeSnapshot.dayNumber + 1
+                    )
+                  )
+                }
+                className="px-2 py-0.5 rounded bg-surface border border-line font-bold text-ink cursor-pointer"
+              >
+                +1 روز
+              </button>
+              {timeMachineDay !== null && (
+                <button
+                  type="button"
+                  onClick={() => setTimeMachineDay(null)}
+                  className="px-2.5 py-0.5 rounded bg-wine text-white font-bold cursor-pointer"
+                >
+                  زمان حال
+                </button>
+              )}
+            </div>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={Math.max(1, latestLog?.dayNumber ?? 10)}
+            step={1}
+            value={activeTimeSnapshot.dayNumber}
+            onChange={(e) => setTimeMachineDay(Number(e.target.value))}
+            className="w-full accent-wine cursor-pointer"
+            aria-label="اسلایدر سفر در زمان روی منحنی تخمیر"
+          />
+          <div className="flex flex-wrap items-center justify-between gap-2 font-mono text-xs text-ink ltr-metric">
+            <span>SG {activeTimeSnapshot.sg.toFixed(3)}</span>
+            <span>
+              ΔBenchmark{' '}
+              {activeTimeSnapshot.sgDeltaVsBenchmark >= 0 ? '+' : ''}
+              {activeTimeSnapshot.sgDeltaVsBenchmark.toFixed(3)}
+            </span>
+            <span>Temp {activeTimeSnapshot.tempCap.toFixed(1)}°C</span>
+            <span>pH {activeTimeSnapshot.ph.toFixed(2)}</span>
+            <span>dSG/dt {activeTimeSnapshot.velocityPerDay.toFixed(3)}/d</span>
+          </div>
+        </div>
+
         <div className="w-full overflow-x-auto">
           <svg
             viewBox={`0 0 ${svgWidth} ${svgHeight}`}
@@ -685,6 +1071,17 @@ export const BandedFermentationChartAndSO2Panel: React.FC<
             role="img"
             aria-label="نمودار باند سلامت تخمیر و نشانگرهای تغذیه"
           >
+            {timeMachineDay !== null && (
+              <line
+                x1={dayToX(activeTimeSnapshot.dayNumber)}
+                y1={padTop}
+                x2={dayToX(activeTimeSnapshot.dayNumber)}
+                y2={svgHeight - padBottom}
+                stroke="#6e1f2f"
+                strokeDasharray="4 2"
+                strokeWidth="1.5"
+              />
+            )}
             {/* Horizontal SG Grid Lines */}
             {[1.09, 1.07, 1.05, 1.03, 1.01, 0.993].map((sgTick) => {
               const y = sgToY(sgTick);

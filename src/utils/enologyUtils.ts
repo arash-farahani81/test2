@@ -1070,3 +1070,56 @@ export function buildCalculatorDirectAdditions(params: {
   }
 }
 
+export interface GraduatedSyringeMetrics {
+  volumeMl: number;
+  barrelCapacityMl: 1 | 5 | 10 | 20 | 50 | 100;
+  fillRatio: number;
+  liquidWidth: number;
+  plungerX: number;
+  majorTicks: Array<{ ml: number; x: number }>;
+}
+
+export function computeGraduatedSyringeMetrics(
+  syringeVolumeMl: number
+): GraduatedSyringeMetrics {
+  const volumeMl = Math.max(
+    0,
+    Math.round((Number.isFinite(syringeVolumeMl) ? syringeVolumeMl : 0) * 100) /
+      100
+  );
+  let barrelCapacityMl: 1 | 5 | 10 | 20 | 50 | 100;
+  if (volumeMl <= 1) {
+    barrelCapacityMl = 1;
+  } else if (volumeMl <= 5) {
+    barrelCapacityMl = 5;
+  } else if (volumeMl <= 10) {
+    barrelCapacityMl = 10;
+  } else if (volumeMl <= 20) {
+    barrelCapacityMl = 20;
+  } else if (volumeMl <= 50) {
+    barrelCapacityMl = 50;
+  } else {
+    barrelCapacityMl = 100;
+  }
+
+  const fillRatio = Math.min(1, Math.max(0, volumeMl / barrelCapacityMl));
+  const liquidWidth = Math.round(fillRatio * 140 * 10) / 10;
+  const plungerX = Math.round((34 + liquidWidth) * 10) / 10;
+
+  const majorTicks: Array<{ ml: number; x: number }> = [];
+  for (let i = 0; i <= 5; i++) {
+    majorTicks.push({
+      ml: Math.round(barrelCapacityMl * (i / 5) * 10) / 10,
+      x: Math.round((34 + 140 * (i / 5)) * 10) / 10
+    });
+  }
+
+  return {
+    volumeMl,
+    barrelCapacityMl,
+    fillRatio,
+    liquidWidth,
+    plungerX,
+    majorTicks
+  };
+}

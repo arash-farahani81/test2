@@ -17,8 +17,14 @@ import { computeVesselTwinState } from '../components/LivingTankVisualTwin.tsx';
 import { getGlobalActiveTimersSnapshot } from '../components/ProcessRoadmapTracker.tsx';
 import {
   computeSensoryRadarPolygonPoints,
-  buildVintagePassportSummary
+  buildVintagePassportSummary,
+  computeWineGlassVisualMetrics
 } from '../components/PhotoDiaryAndVintagePanel.tsx';
+import { computeHydrometerCylinderMetrics } from '../components/QuickTenSecondLogModal.tsx';
+import {
+  computeTimeMachineDaySnapshot,
+  computeSo2TrajectoryVector
+} from '../components/BandedFermentationChartAndSO2Panel.tsx';
 import type { FermentationLogEntry } from '../types/tracking.ts';
 import type { ChemicalAddition } from '../types/database.ts';
 
@@ -1046,4 +1052,135 @@ test('buildVintagePassportSummary: computes ABV, bottle yield (124 for Tank 1, 4
   assert.equal(rosePassport.bottles750mlCount, 40);
   assert.equal(rosePassport.oakProfileFa, 'بدون بلوط (Unoaked Rosé)');
   assert.equal(rosePassport.wineColorHex, '#B8293D');
+});
+
+test('computeHydrometerCylinderMetrics: floats higher at high SG (1.092), sinks lower at low SG (0.993), computes nextStationMarkerY and 61 vernierTicks (Golden Ideas 2 & 3)', () => {
+  const highSg = computeHydrometerCylinderMetrics({
+    currentSG: 1.092,
+    nextTargetSG: 1.07,
+    isRose: false
+  });
+  const lowSg = computeHydrometerCylinderMetrics({
+    currentSG: 0.993,
+    nextTargetSG: null,
+    isRose: true
+  });
+
+  // High SG (1.092) floats higher (negative stemOffsetY), Low SG (0.993) sinks lower (positive stemOffsetY)
+  assert.ok(
+    highSg.stemOffsetY < 0,
+    `Expected negative stemOffsetY at 1.092, got ${highSg.stemOffsetY}`
+  );
+  assert.ok(
+    lowSg.stemOffsetY > 0,
+    `Expected positive stemOffsetY at 0.993, got ${lowSg.stemOffsetY}`
+  );
+  assert.ok(highSg.stemOffsetY < lowSg.stemOffsetY);
+
+  // Next station marker Y computed when nextTargetSG = 1.070
+  assert.ok(highSg.nextStationMarkerY !== null);
+  assert.equal(lowSg.nextStationMarkerY, null);
+
+  // 61 Vernier ticks from 0.990 to 1.110 with major and minor ticks
+  assert.equal(highSg.vernierTicks.length, 61);
+  assert.equal(highSg.vernierTicks[0].sg, 0.99);
+  assert.equal(highSg.vernierTicks[0].isMajor, true);
+  assert.equal(highSg.vernierTicks[60].sg, 1.11);
+  assert.equal(highSg.vernierTicks[60].isMajor, true);
+  assert.ok(highSg.vernierTicks.some((t) => !t.isMajor));
+});
+
+test('computeWineGlassVisualMetrics: higher bodyScore (5 vs 1) and higher abvPct (14.5 vs 10.5) produce larger legsCount, thicker legStrokeWidth, longer legFallDurationSec, and valid leg x coordinates (Golden Idea 1)', () => {
+  const fullBody = computeWineGlassVisualMetrics({
+    wineColorHex: '#4A1230',
+    bodyScore: 5,
+    abvPct: 14.5
+  });
+  const lightBody = computeWineGlassVisualMetrics({
+    wineColorHex: '#E88D72',
+    bodyScore: 1,
+    abvPct: 10.5
+  });
+
+  assert.equal(fullBody.wineColorHex, '#4A1230');
+  assert.ok(fullBody.legsCount > lightBody.legsCount);
+  assert.ok(fullBody.legStrokeWidth > lightBody.legStrokeWidth);
+  assert.ok(fullBody.legFallDurationSec > lightBody.legFallDurationSec);
+  assert.equal(fullBody.legs.length, fullBody.legsCount);
+  for (const leg of fullBody.legs) {
+    assert.ok(leg.x >= 42 && leg.x <= 98, `Expected leg.x in [42, 98], got ${leg.x}`);
+  }
+});
+
+test('computeTimeMachineDaySnapshot & computeSo2TrajectoryVector: computes historical day snapshot and SO2 trajectory vector accurately (Golden Ideas 4, 6, 7 & 8)', () => {
+  const realLogs: FermentationLogEntry[] = [
+    {
+      id: 'tm-1',
+      tankId: 'tank-a',
+      dayNumber: 0,
+      dateTime: '1405/07/01',
+      stageTitle: 'روز ۰',
+      brix: 22.0,
+      sg: 1.092,
+      tempCap: 22.0,
+      tempRoom: 20.0,
+      ph: 3.52,
+      pigeageDone: true
+    },
+    {
+      id: 'tm-2',
+      tankId: 'tank-a',
+      dayNumber: 3,
+      dateTime: '1405/07/04',
+      stageTitle: 'روز ۳',
+      brix: 15.0,
+      sg: 1.06,
+      tempCap: 25.0,
+      tempRoom: 21.0,
+      ph: 3.54,
+      pigeageDone: true
+    }
+  ];
+  const benchLogs: FermentationLogEntry[] = [
+    {
+      ...realLogs[0],
+      id: 'bm-1',
+      isBenchmark: true
+    },
+    {
+      ...realLogs[1],
+      id: 'bm-2',
+      sg: 1.056,
+      isBenchmark: true
+    }
+  ];
+
+  const snap = computeTimeMachineDaySnapshot({
+    dayNumber: 3,
+    logs: realLogs,
+    benchmarkLogs: benchLogs,
+    initialSG: 1.092
+  });
+  assert.equal(snap.dayNumber, 3);
+  assert.equal(snap.sg, 1.06);
+  assert.equal(snap.benchmarkSG, 1.056);
+  assert.equal(snap.sgDeltaVsBenchmark, 0.004);
+  assert.ok(snap.velocityPerDay > 0);
+
+  const vec = computeSo2TrajectoryVector({
+    currentFreeSo2MgL: 18,
+    ph: 3.52,
+    isRose: false,
+    effectiveVolumeL: 96
+  });
+  assert.equal(vec.needsAddition, true);
+  assert.ok(vec.kmsGramsNeeded > 0);
+  assert.ok(vec.targetX > vec.currentX);
+
+  const twin = computeVesselTwinState({
+    tankId: 'tank-a',
+    logs: realLogs
+  });
+  assert.ok(twin.airlockBubbleIntervalSec > 0);
+  assert.ok(twin.sineWaveAmplitudePx > 0);
 });

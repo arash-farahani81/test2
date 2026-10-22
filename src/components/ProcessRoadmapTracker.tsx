@@ -537,6 +537,9 @@ export const ProcessRoadmapTracker: React.FC<ProcessRoadmapTrackerProps> = ({
   const [filterPhase, setFilterPhase] = useState<number | 'all'>(() => activePhaseNumber);
   const [searchQuery, setSearchQuery] = useState('');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [focusedStepHaloNumber, setFocusedStepHaloNumber] = useState<
+    number | null
+  >(null);
 
   useEffect(() => {
     if (roadmapHighlightStepNumber !== null && roadmapHighlightStepNumber !== undefined) {
@@ -546,6 +549,13 @@ export const ProcessRoadmapTracker: React.FC<ProcessRoadmapTrackerProps> = ({
       if (targetStep) {
         setCurrentStepId(targetStep.id);
         setFilterPhase(targetStep.phaseId);
+        setFocusedStepHaloNumber(targetStep.id);
+        setTimeout(() => {
+          document
+            .getElementById('roadmap-step-card-' + targetStep.id)
+            ?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+        }, 80);
+        setTimeout(() => setFocusedStepHaloNumber(null), 2500);
       }
       clearRoadmapHighlightStep();
     }
@@ -1949,12 +1959,15 @@ export const ProcessRoadmapTracker: React.FC<ProcessRoadmapTrackerProps> = ({
             return (
               <div
                 key={step.id}
+                id={`roadmap-step-card-${step.id}`}
                 className={`p-3.5 rounded-xl border transition-all flex flex-col lg:flex-row lg:items-center justify-between gap-3 ${
-                  isActive
-                    ? 'bg-paper border-wine shadow-xs ring-1 ring-wine/30'
-                    : isCompleted
-                    ? 'bg-emerald-50/40 border-emerald-200/80 opacity-90'
-                    : 'bg-surface border-line hover:bg-paper'
+                  focusedStepHaloNumber === step.id
+                    ? 'ring-2 ring-wine bg-wine/5 shadow-md duration-500'
+                    : isActive
+                      ? 'bg-paper border-wine shadow-xs ring-1 ring-wine/30'
+                      : isCompleted
+                        ? 'bg-emerald-50/40 border-emerald-200/80 opacity-90'
+                        : 'bg-surface border-line hover:bg-paper'
                 }`}
               >
                 <div className="flex items-start gap-3">

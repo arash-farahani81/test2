@@ -50,6 +50,82 @@ import {
 
 export type QuickSheetPresetMode = 'measurement' | 'addition' | 'lab';
 
+export interface HydrometerCylinderMetrics {
+  clampedSG: number;
+  normalizedRatio: number;
+  stemOffsetY: number;
+  meniscusY: number;
+  nextStationMarkerY: number | null;
+  liquidColorHex: string;
+  vernierTicks: Array<{
+    sg: number;
+    xPct: number;
+    isMajor: boolean;
+    isMedium: boolean;
+  }>;
+}
+
+export function computeHydrometerCylinderMetrics(params: {
+  currentSG: number;
+  nextTargetSG?: number | null;
+  isRose?: boolean;
+}): HydrometerCylinderMetrics {
+  const clampedSG = Math.min(
+    1.11,
+    Math.max(0.99, Number.isFinite(params.currentSG) ? params.currentSG : 1.083)
+  );
+  const normalizedRatio =
+    Math.round(((clampedSG - 0.99) / 0.12) * 1000) / 1000;
+  const meniscusY = 56;
+  const stemOffsetY = Math.round((0.5 - normalizedRatio) * 52 * 10) / 10;
+
+  let nextStationMarkerY: number | null = null;
+  if (
+    params.nextTargetSG !== undefined &&
+    params.nextTargetSG !== null &&
+    params.nextTargetSG >= 0.99 &&
+    params.nextTargetSG <= 1.11
+  ) {
+    const targetRatio = (params.nextTargetSG - 0.99) / 0.12;
+    nextStationMarkerY = Math.round((118 - targetRatio * 84) * 10) / 10;
+  }
+
+  const liquidColorHex = params.isRose
+    ? clampedSG >= 1.08
+      ? '#D96B52'
+      : '#E88D72'
+    : clampedSG >= 1.08
+      ? '#4A153B'
+      : clampedSG >= 1.02
+        ? '#6E1F2F'
+        : '#7A1C24';
+
+  const vernierTicks: Array<{
+    sg: number;
+    xPct: number;
+    isMajor: boolean;
+    isMedium: boolean;
+  }> = [];
+  for (let i = 0; i <= 60; i++) {
+    const sg = Math.round((0.99 + i * 0.002) * 1000) / 1000;
+    const thousandths = Math.round(sg * 1000);
+    const isMajor = thousandths % 10 === 0;
+    const isMedium = !isMajor && thousandths % 5 === 0;
+    const xPct = Math.round(((sg - 0.99) / 0.12) * 1000) / 10;
+    vernierTicks.push({ sg, xPct, isMajor, isMedium });
+  }
+
+  return {
+    clampedSG,
+    normalizedRatio,
+    stemOffsetY,
+    meniscusY,
+    nextStationMarkerY,
+    liquidColorHex,
+    vernierTicks
+  };
+}
+
 export interface QuickTenSecondLogModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -471,6 +547,37 @@ export const QuickTenSecondLogModal: React.FC<QuickTenSecondLogModalProps> = ({
     activeBatch?.initialSG,
     batchPlan
   ]);
+
+  const hydrometerMetrics = useMemo(
+    () =>
+      computeHydrometerCylinderMetrics({
+        currentSG: hasValidSGInput ? trueSG : lastSG,
+        nextTargetSG: predictionPreview?.nextCriticalStation?.targetSG ?? null,
+        isRose: tankId === 'tank-rose'
+      }),
+    [
+      hasValidSGInput,
+      trueSG,
+      lastSG,
+      predictionPreview?.nextCriticalStation?.targetSG,
+      tankId
+    ]
+  );
+
+  const handleVernierSgChange = (nextSgVal: number) => {
+    const clamped = Math.min(1.11, Math.max(0.99, nextSgVal));
+    setRawSGInput(clamped.toFixed(3));
+    if (
+      typeof navigator !== 'undefined' &&
+      typeof navigator.vibrate === 'function'
+    ) {
+      try {
+        navigator.vibrate(4);
+      } catch {
+        // ignore haptic error
+      }
+    }
+  };
 
   const typoShieldAlert = useMemo(() => {
     if (!hasValidSGInput) return null;
@@ -1168,43 +1275,291 @@ export const QuickTenSecondLogModal: React.FC<QuickTenSecondLogModalProps> = ({
                   </button>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setRawSGInput((normalizedRawSG - 0.002).toFixed(3))
-                    }
-                    className="min-h-[48px] px-3.5 rounded-xl bg-surface hover:bg-paper border border-line text-ink font-mono font-bold text-sm cursor-pointer"
+                <div className="flex items-stretch gap-3">
+                  {/* Live Floating Hydrometer & Meniscus Cylinder SVG (Golden Idea 2) */}
+                  <svg
+                    viewBox="0 0 76 152"
+                    data-testid="live-hydrometer-cylinder-svg"
+                    className="w-20 h-36 shrink-0 rounded-xl border border-line bg-paper p-1.5"
+                    aria-label="شبیه‌ساز زنده شناوری هیدرومتر و منیسک"
                   >
-                    -0.002
-                  </button>
-                  <input
-                    id="quick-sg-input"
-                    type="text"
-                    inputMode="decimal"
-                    placeholder={'آخرین مقدار شما: ' + lastSG.toFixed(3)}
-                    value={rawSGInput}
-                    onChange={(e) => setRawSGInput(e.target.value)}
-                    onBlur={() => {
-                      const norm = normalizeEnologyNumericInput(
-                        rawSGInput,
-                        'sg'
-                      );
-                      if (norm !== null) {
-                        setRawSGInput(norm.toFixed(3));
-                      }
-                    }}
-                    className="flex-1 min-h-[52px] bg-surface border-2 border-wine/60 rounded-xl px-3 text-center text-xl font-mono font-bold text-ink placeholder:text-ink-soft placeholder:text-xs"
-                  />
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setRawSGInput((normalizedRawSG + 0.002).toFixed(3))
-                    }
-                    className="min-h-[48px] px-3.5 rounded-xl bg-surface hover:bg-paper border border-line text-ink font-mono font-bold text-sm cursor-pointer"
-                  >
-                    +0.002
-                  </button>
+                    {/* Graduated glass cylinder walls */}
+                    <rect
+                      x="18"
+                      y="12"
+                      width="40"
+                      height="126"
+                      rx="6"
+                      fill="none"
+                      stroke="currentColor"
+                      className="text-line"
+                      strokeWidth="1.5"
+                    />
+                    {/* Wine liquid column from meniscusY down to 136 */}
+                    <rect
+                      x="19.5"
+                      y={hydrometerMetrics.meniscusY}
+                      width="37"
+                      height={136 - hydrometerMetrics.meniscusY}
+                      rx="4"
+                      fill={hydrometerMetrics.liquidColorHex}
+                      fillOpacity="0.82"
+                    />
+                    {/* Curved concave meniscus path */}
+                    <path
+                      d="M 18 54 Q 38 60 58 54"
+                      fill="none"
+                      stroke={hydrometerMetrics.liquidColorHex}
+                      strokeWidth="2.5"
+                    />
+                    {/* Floating Hydrometer Group */}
+                    <g
+                      data-testid="hydrometer-floating-stem"
+                      style={{
+                        transform: `translateY(${hydrometerMetrics.stemOffsetY}px)`,
+                        transition:
+                          'transform 220ms cubic-bezier(0.22, 1, 0.36, 1)'
+                      }}
+                    >
+                      {/* Narrow upper stem */}
+                      <rect
+                        x="35"
+                        y="18"
+                        width="6"
+                        height="58"
+                        rx="3"
+                        fill="#FAF6F0"
+                        stroke="#78716C"
+                        strokeWidth="1"
+                      />
+                      {/* Scale ticks on stem */}
+                      <line
+                        x1="35"
+                        y1="30"
+                        x2="41"
+                        y2="30"
+                        stroke="#7A1C32"
+                        strokeWidth="1"
+                      />
+                      <text
+                        x="33"
+                        y="32"
+                        textAnchor="end"
+                        className="fill-current text-ink-soft font-mono"
+                        fontSize="6"
+                      >
+                        1.000
+                      </text>
+                      <line
+                        x1="35"
+                        y1="48"
+                        x2="41"
+                        y2="48"
+                        stroke="#7A1C32"
+                        strokeWidth="1"
+                      />
+                      <text
+                        x="33"
+                        y="50"
+                        textAnchor="end"
+                        className="fill-current text-ink-soft font-mono"
+                        fontSize="6"
+                      >
+                        1.040
+                      </text>
+                      <line
+                        x1="35"
+                        y1="66"
+                        x2="41"
+                        y2="66"
+                        stroke="#7A1C32"
+                        strokeWidth="1"
+                      />
+                      <text
+                        x="33"
+                        y="68"
+                        textAnchor="end"
+                        className="fill-current text-ink-soft font-mono"
+                        fontSize="6"
+                      >
+                        1.080
+                      </text>
+                      {/* Weighted body & lead bulb */}
+                      <ellipse
+                        cx="38"
+                        cy="88"
+                        rx="7.5"
+                        ry="14"
+                        fill="#FAF6F0"
+                        stroke="#78716C"
+                        strokeWidth="1"
+                      />
+                      <circle cx="38" cy="105" r="4.5" fill="#44403C" />
+                    </g>
+                    {/* Next-Station Golden Marker */}
+                    {hydrometerMetrics.nextStationMarkerY !== null && (
+                      <g data-testid="hydrometer-next-station-marker">
+                        <line
+                          x1="14"
+                          y1={hydrometerMetrics.nextStationMarkerY}
+                          x2="62"
+                          y2={hydrometerMetrics.nextStationMarkerY}
+                          stroke="#a8661a"
+                          strokeDasharray="3 2"
+                          strokeWidth="1.5"
+                        />
+                        <text
+                          x="73"
+                          y={hydrometerMetrics.nextStationMarkerY + 2}
+                          textAnchor="end"
+                          fill="#a8661a"
+                          fontSize="7"
+                          fontWeight="bold"
+                        >
+                          هدف
+                        </text>
+                      </g>
+                    )}
+                  </svg>
+
+                  {/* SG Numeric Input & tactile steppers */}
+                  <div className="flex-1 flex flex-col justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleVernierSgChange(normalizedRawSG - 0.002)
+                        }
+                        className="min-h-[48px] px-3 rounded-xl bg-surface hover:bg-paper border border-line text-ink font-mono font-bold text-sm cursor-pointer"
+                      >
+                        -0.002
+                      </button>
+                      <input
+                        id="quick-sg-input"
+                        type="text"
+                        inputMode="decimal"
+                        placeholder={'آخرین مقدار شما: ' + lastSG.toFixed(3)}
+                        value={rawSGInput}
+                        onChange={(e) => setRawSGInput(e.target.value)}
+                        onBlur={() => {
+                          const norm = normalizeEnologyNumericInput(
+                            rawSGInput,
+                            'sg'
+                          );
+                          if (norm !== null) {
+                            setRawSGInput(norm.toFixed(3));
+                          }
+                        }}
+                        className="flex-1 min-h-[52px] bg-surface border-2 border-wine/60 rounded-xl px-2 text-center text-xl font-mono font-bold text-ink placeholder:text-ink-soft placeholder:text-xs"
+                      />
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleVernierSgChange(normalizedRawSG + 0.002)
+                        }
+                        className="min-h-[48px] px-3 rounded-xl bg-surface hover:bg-paper border border-line text-ink font-mono font-bold text-sm cursor-pointer"
+                      >
+                        +0.002
+                      </button>
+                    </div>
+
+                    {/* Tactile Vernier Scrubber (Golden Idea 3) */}
+                    <div
+                      data-testid="sg-vernier-scrubber"
+                      className="bg-surface border border-line rounded-xl p-2 space-y-1"
+                    >
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-bold text-ink-soft">
+                          خطکش لمسی تنظیم سریع SG:
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleVernierSgChange(
+                                hydrometerMetrics.clampedSG - 0.001
+                              )
+                            }
+                            className="px-2 py-0.5 rounded bg-paper border border-line font-mono text-xs font-bold text-ink cursor-pointer"
+                          >
+                            -0.001
+                          </button>
+                          <span className="font-mono font-bold text-wine ltr-metric">
+                            {hydrometerMetrics.clampedSG.toFixed(3)}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleVernierSgChange(
+                                hydrometerMetrics.clampedSG + 0.001
+                              )
+                            }
+                            className="px-2 py-0.5 rounded bg-paper border border-line font-mono text-xs font-bold text-ink cursor-pointer"
+                          >
+                            +0.001
+                          </button>
+                        </div>
+                      </div>
+                      <input
+                        type="range"
+                        min={0.99}
+                        max={1.11}
+                        step={0.001}
+                        value={hydrometerMetrics.clampedSG}
+                        onChange={(e) =>
+                          handleVernierSgChange(
+                            Number.parseFloat(e.target.value)
+                          )
+                        }
+                        className="w-full accent-wine cursor-pointer"
+                        aria-label="خطکش لمسی وزن مخصوص"
+                      />
+                      <svg
+                        viewBox="0 0 300 28"
+                        className="w-full h-7 overflow-visible"
+                        aria-hidden="true"
+                      >
+                        {hydrometerMetrics.vernierTicks.map((t) => {
+                          const x = (t.xPct / 100) * 284 + 8;
+                          const isNearActive =
+                            Math.abs(t.sg - hydrometerMetrics.clampedSG) <=
+                            0.0025;
+                          const h = t.isMajor ? 11 : t.isMedium ? 7 : 4;
+                          const showLabel =
+                            t.sg === 0.99 ||
+                            t.sg === 1.02 ||
+                            t.sg === 1.05 ||
+                            t.sg === 1.08 ||
+                            t.sg === 1.11;
+                          return (
+                            <g key={t.sg}>
+                              <line
+                                x1={x}
+                                y1={2}
+                                x2={x}
+                                y2={2 + h}
+                                stroke={isNearActive ? '#7A1C32' : '#A8A29E'}
+                                strokeWidth={
+                                  isNearActive ? '2' : t.isMajor ? '1.3' : '0.9'
+                                }
+                              />
+                              {showLabel && (
+                                <text
+                                  x={x}
+                                  y={24}
+                                  textAnchor="middle"
+                                  fontSize="7.5"
+                                  className="fill-current text-ink-soft font-mono"
+                                >
+                                  {t.sg.toFixed(3)}
+                                </text>
+                              )}
+                            </g>
+                          );
+                        })}
+                      </svg>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Core Field 2: Sample Temperature (دمای نمونه) */}
@@ -1399,6 +1754,37 @@ export const QuickTenSecondLogModal: React.FC<QuickTenSecondLogModalProps> = ({
                     >
                       +0.5 °C
                     </button>
+                  </div>
+                  <div className="bg-surface border border-line rounded-xl px-2.5 py-1.5 space-y-1">
+                    <div className="flex items-center justify-between text-xs text-ink-soft font-mono">
+                      <span>10°C</span>
+                      <span className="font-bold text-wine ltr-metric">
+                        {tempCap.toFixed(1)} °C
+                      </span>
+                      <span>35°C</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={10}
+                      max={35}
+                      step={0.5}
+                      value={Math.min(35, Math.max(10, tempCap))}
+                      onChange={(e) => {
+                        setTempCap(Number.parseFloat(e.target.value));
+                        if (
+                          typeof navigator !== 'undefined' &&
+                          typeof navigator.vibrate === 'function'
+                        ) {
+                          try {
+                            navigator.vibrate(4);
+                          } catch {
+                            // ignore haptic error
+                          }
+                        }
+                      }}
+                      className="w-full accent-wine cursor-pointer"
+                      aria-label="خطکش لمسی دمای کلاهک"
+                    />
                   </div>
                   {isTempCapOutOfNormalRange && (
                     <div className="bg-amber-50 border border-amber-300 rounded-lg p-2 text-xs text-amber-950">

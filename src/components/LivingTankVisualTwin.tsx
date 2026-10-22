@@ -36,6 +36,8 @@ export interface VesselTwinState {
   velocityPerDay: number;
   bubbleCount: number;
   bubbleDurationSec: number;
+  airlockBubbleIntervalSec: number;
+  sineWaveAmplitudePx: number;
   activityLabelFa: string;
   tempAlert: 'normal' | 'caution' | 'warning' | 'danger';
 }
@@ -196,6 +198,13 @@ export function computeVesselTwinState(params: {
     activityLabelFa = 'فاز لگ / ملایم';
   }
 
+  const airlockBubbleIntervalSec =
+    bubbleCount > 0
+      ? Math.max(0.7, Math.round(bubbleDurationSec * 0.75 * 10) / 10)
+      : 0;
+  const sineWaveAmplitudePx =
+    bubbleCount >= 8 ? 3.2 : bubbleCount > 0 ? 2.0 : 0;
+
   const tempAlert = getCapTemperatureAlertLevel(tempCap, isRose, currentSG);
 
   const labelFa = isRose
@@ -235,6 +244,8 @@ export function computeVesselTwinState(params: {
     velocityPerDay: velocityInfo.recentVelocityPerDay,
     bubbleCount,
     bubbleDurationSec,
+    airlockBubbleIntervalSec,
+    sineWaveAmplitudePx,
     activityLabelFa,
     tempAlert
   };
@@ -389,17 +400,42 @@ export const LivingTankVisualTwin: React.FC<{
                     </linearGradient>
                   </defs>
 
-                  {/* Airlock / Lid Neck */}
-                  <rect
-                    x="44"
-                    y="6"
-                    width="12"
-                    height="12"
-                    rx="3"
-                    fill="#e4dccd"
-                    stroke="#6b625a"
-                    strokeWidth="1.5"
-                  />
+                  {/* Glass Airlock Bubbler & Lid Neck (Golden Idea 4) */}
+                  <g data-testid="vessel-airlock-bubbler-svg">
+                    <rect
+                      x="44"
+                      y="9"
+                      width="12"
+                      height="9"
+                      rx="2.5"
+                      fill="#e4dccd"
+                      stroke="#6b625a"
+                      strokeWidth="1.4"
+                    />
+                    <path
+                      d="M 50 18 L 50 9 C 50 4 56 4 56 8 C 56 12 44 12 44 6 L 44 3"
+                      fill="none"
+                      stroke="#6b625a"
+                      strokeWidth="1.6"
+                      strokeLinecap="round"
+                    />
+                    {vessel.bubbleCount > 0 && (
+                      <circle cx="44" cy="4" r="2.2" fill="#6e1f2f">
+                        <animate
+                          attributeName="cy"
+                          values="8;1"
+                          dur={`${vessel.airlockBubbleIntervalSec}s`}
+                          repeatCount="indefinite"
+                        />
+                        <animate
+                          attributeName="opacity"
+                          values="0.9;0"
+                          dur={`${vessel.airlockBubbleIntervalSec}s`}
+                          repeatCount="indefinite"
+                        />
+                      </circle>
+                    )}
+                  </g>
 
                   {/* Clipped Interior Fill (Liquid + Optional Pomace Cap + Rising Bubbles) */}
                   <g clipPath={`url(#${clipId})`}>
@@ -412,13 +448,20 @@ export const LivingTankVisualTwin: React.FC<{
                       fill="#fbf9f4"
                     />
 
-                    {/* Liquid Layer */}
-                    <rect
-                      x="14"
-                      y={liquidTopY}
-                      width="72"
-                      height={totalFillH + 4}
+                    {/* Liquid Layer with Sine-Wave Surface */}
+                    <path
+                      d={`M 16 ${liquidTopY} Q 33 ${
+                        liquidTopY - vessel.sineWaveAmplitudePx
+                      } 50 ${liquidTopY} T 84 ${liquidTopY} L 84 120 L 16 120 Z`}
                       fill={`url(#${gradId})`}
+                    />
+                    <path
+                      d={`M 18 ${liquidTopY} Q 34 ${
+                        liquidTopY - vessel.sineWaveAmplitudePx
+                      } 50 ${liquidTopY} T 82 ${liquidTopY}`}
+                      fill="none"
+                      stroke={vessel.liquidHighlightHex}
+                      strokeWidth="1.5"
                     />
 
                     {/* Floating Pomace Cap Layer for Red Maceration */}
