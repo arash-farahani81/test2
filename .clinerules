@@ -1,0 +1,28 @@
+# Agent Execution Protocol & Architecture Guide (Enology Studio)
+
+## 1. Tech Stack & Directory Map
+- Shared Types & Zod Schemas (READ FIRST): `src/types/index.ts`
+- Single Source of Truth Protocol Config: `src/data/masterProtocolConfig.ts`
+- Pure Chemistry & Enology Math: `src/utils/enologyUtils.ts`
+- Fermentation Kinetics & Diagnostics: `src/utils/trackingCalculations.ts`
+- Troubleshooting & Crisis Engine: `src/utils/enologyTroubleshooting.ts`
+- LocalStorage/IndexedDB Service: `src/db/enologyDatabase.ts`
+- 4-Pillar UI Components:
+  - Pillar 1 (46-Step Roadmap & Timers): `src/components/ProcessRoadmapTracker.tsx`
+  - Pillar 2 (Tank Dashboard, SVG Charts & 5-Tab Logbook): `src/components/FermentationTracker.tsx`
+  - Pillar 3 (9 Lab Calculators, SOPs & Troubleshooter): `src/components/TestingGuide.tsx`
+  - Pillar 4 (Master Protocol, PubChem/UniProt DB & Backup): `src/components/MasterProtocolView.tsx`, `src/components/BioscienceDatabaseView.tsx`
+  - Flexible Parameter Studio Bar: `src/components/FlexibleProtocolCustomizerBar.tsx`
+
+## 2. Strict Token-Saving Rules
+- DO NOT run exploratory `ls` or read unrelated files. Only open the exact target file(s) named in the prompt.
+- Check `src/types/index.ts` first when inspecting data contracts.
+- When working on UI components (`src/components/*`), read `.agent/API_SIGNATURES.md` and `src/types/index.ts` instead of opening implementation files in `src/utils/` or `src/db/`.
+- NEVER open static text data files (`src/data/protocolData.ts`, `src/data/bioscienceData.ts`, `src/data/roadmapStepsData.ts`, `src/data/seedTrackingData.ts`) unless the user prompt explicitly asks to modify them.
+- Keep edits minimal and surgical. NEVER rewrite an entire large file when a targeted search/replace block suffices.
+- Preserve 100% of existing features, formulas, and Persian instructional texts (Zero Feature Loss Rule).
+
+## 3. Silent Verification Loop (Mandatory)
+- After completing edits, DO NOT run verbose `npm run build` or `npm test`.
+- Always verify changes by running: `npm run agent:check`
+- If `npm run agent:check` passes, update `.agent/TASK_STATE.md` if requested and stop immediately.

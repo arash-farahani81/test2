@@ -1,0 +1,68 @@
+@import "tailwindcss";
+@import "@fontsource/vazirmatn/400.css";
+@import "@fontsource/vazirmatn/500.css";
+@import "@fontsource/vazirmatn/700.css";
+@import "@fontsource/vazirmatn/800.css";
+
+@theme {
+  --color-paper: #f6f1e7;
+  --color-surface: #fbf9f4;
+  --color-ink: #1f1a17;
+  --color-ink-soft: #6b625a;
+  --color-line: #e4dccd;
+  --color-wine: #6e1f2f;
+  --color-ok: #3f6b4a;
+  --color-warn: #a8661a;
+  --color-danger: #b3261e;
+}
+
+@layer base {
+  * {
+    font-family: 'Vazirmatn', sans-serif;
+  }
+  body {
+    direction: rtl;
+    text-align: right;
+    background-color: var(--color-paper);
+    color: var(--color-ink);
+  }
+  input, textarea, select, button {
+    font-family: inherit;
+  }
+  code, kbd, samp, pre, .font-mono {
+    font-family: 'Vazirmatn', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+    font-variant-numeric: tabular-nums;
+  }
+  input[type="number"], input[inputmode="decimal"], .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+  .ltr-metric {
+    direction: ltr;
+    unicode-bidi: embed;
+    font-variant-numeric: tabular-nums;
+    display: inline-block;
+  }
+  ::placeholder {
+    font-family: 'Vazirmatn', sans-serif !important;
+  }
+}
+
+@media print {
+  body {
+    background-color: #ffffff !important;
+    color: #111827 !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
+  }
+  .print-page-break {
+    page-break-after: always;
+  }
+  .print-card {
+    box-shadow: none !important;
+    border: 1px solid #e5e7eb !important;
+  }
+}

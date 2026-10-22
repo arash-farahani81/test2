@@ -1,0 +1,6 @@
+{
+  "summary":  "Implementation plan to generate the repository bundle using Repomix in Markdown format (repomix-output.md) with clean exclusion of build artifacts and large digest bundles.",
+  "updatedAt":  "2026-10-22T04:25:23.227891819Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

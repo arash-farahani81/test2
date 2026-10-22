@@ -1,0 +1,43 @@
+{
+  "name": "enology-studio",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port=3000 --host=0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview",
+    "clean": "rm -rf dist server.js",
+    "lint": "tsc --noEmit",
+    "ui:lint": "tsx scripts/ui_lint_check.ts",
+    "test": "tsx --test src/db/enologyDatabase.test.ts src/utils/enologyUtils.test.ts src/utils/trackingCalculations.test.ts src/utils/enologyTroubleshooting.test.ts src/utils/rightNowEngine.test.ts src/utils/exportDocxReport.test.ts",
+    "agent:check": "tsc --noEmit --pretty false && tsx --test --test-reporter=dot src/db/enologyDatabase.test.ts src/utils/enologyUtils.test.ts src/utils/trackingCalculations.test.ts src/utils/enologyTroubleshooting.test.ts src/utils/rightNowEngine.test.ts src/utils/exportDocxReport.test.ts && tsx scripts/ui_lint_check.ts",
+    "ai:digest": "tsx scripts/generate_ai_digest.ts",
+    "ai:repomix": "npx repomix"
+  },
+  "dependencies": {
+    "@fontsource/vazirmatn": "^5.3.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@vitejs/plugin-react": "^6.1.1",
+    "docx": "^9.12.0",
+    "file-saver": "^2.0.5",
+    "lucide-react": "^0.546.0",
+    "motion": "^12.23.24",
+    "react": "^19.0.1",
+    "react-dom": "^19.0.1",
+    "vite": "^8.3.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/file-saver": "^2.0.7",
+    "@types/node": "^22.14.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "autoprefixer": "^10.4.21",
+    "esbuild": "^0.25.0",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.21.0",
+    "typescript": "^7.0.2",
+    "vite-plugin-pwa": "^0.20.0"
+  }
+}

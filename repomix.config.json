@@ -1,0 +1,35 @@
+{
+  "output": {
+    "filePath": "repomix-output.xml",
+    "style": "xml",
+    "compress": false,
+    "removeComments": false,
+    "removeEmptyLines": false,
+    "showLineNumbers": true,
+    "fileSummary": true,
+    "directoryStructure": true,
+    "topFilesLength": 10
+  },
+  "include": [
+    "src/**/*",
+    "scripts/**/*",
+    ".agent/**/*",
+    "AGENTS.md",
+    "package.json",
+    "tsconfig*.json",
+    "vite.config.ts",
+    "index.html"
+  ],
+  "ignore": {
+    "useGitignore": true,
+    "customPatterns": [
+      "node_modules/**",
+      "dist/**",
+      "package-lock.json",
+      "repomix-output.*",
+      ".agent/repo-skeleton.xml",
+      "AI_ULTRA_DIGEST.md",
+      "AI_CORE_LOGIC_BUNDLE.md"
+    ]
+  }
+}
