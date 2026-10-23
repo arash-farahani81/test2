@@ -8,6 +8,7 @@ import {
   getAvailableTankSelections,
   getGlossaryItem
 } from '../context/EnologyUiContext.tsx';
+import { EQUIPMENT_PRESET_MINIMAL_PLUS } from '../types/database.ts';
 
 test('evaluateEnologicalScenario: detects low pH and recommends empirical buffer KHCO3 (or exact 1.33 g/L stoichiometric KHCO3 on TA) and 0.84 yield factor', () => {
   const result = evaluateEnologicalScenario({
@@ -395,4 +396,53 @@ test('BUG-04: evaluateEnologicalScenario does NOT recommend post-fermentation KM
     'SG = 1.000 on Day 6 still has ~10-15 g/L residual sugar and must NOT recommend KMS sulfiting'
   );
 });
+
+test('evaluateEnologicalScenario: adapts volatile acidity, H2S, stuck fermentation, and small-gram stock syringe recipes to EQUIPMENT_PRESET_MINIMAL_PLUS', () => {
+  const res = evaluateEnologicalScenario({
+    batchVolumeL: 20,
+    currentSG: 1.035,
+    currentBrix: 9.0,
+    tempCapC: 24.0,
+    ph: 3.55,
+    ta: 6.4,
+    freeSO2: 35,
+    equipmentProfile: EQUIPMENT_PRESET_MINIMAL_PLUS,
+    issues: {
+      hasVolatileAcidity: true,
+      hasH2S: true,
+      isStuckFermentation: true
+    }
+  });
+
+  const vaAction = res.actions.find((a) => a.title.includes('Volatile Acidity'));
+  assert.ok(vaAction);
+  assert.ok(
+    vaAction.steps.some((s) => s.includes('تیلههای شیشهای') || s.includes('Top-up ۱۰۰٪')),
+    'Must append marble/top-up headspace instruction for none_topup_marbles profile'
+  );
+  assert.ok(
+    vaAction.steps.some((s) => s.includes('جایگزین عدم موجودی کیتوزان (Bactiless)')),
+    'Must append non-Bactiless molecular SO2 lock instruction when hasBactilessChitosan is false'
+  );
+  const kmsRecipe = vaAction.calculatedRecipe?.find((r) => r.item.includes('KMS'));
+  assert.ok(kmsRecipe?.instruction.includes('[معادل سرنگ استوک:'));
+
+  const h2sAction = res.actions.find((a) => a.title.includes('H2S'));
+  assert.ok(h2sAction);
+  assert.ok(
+    h2sAction.calculatedRecipe?.[0].instruction.includes('پوسته مخمر جوشاندهشده غیرفعال'),
+    'Must append boiled yeast hulls substitution when Fermaid O is unavailable'
+  );
+  assert.ok(
+    h2sAction.steps.some((s) => s.includes('پروتکل جایگزین بدون سولفات مس')),
+    'Must append copper-free splash racking instruction when copper sulfate is unavailable'
+  );
+
+  const stuckAction = res.actions.find((a) => a.category === 'SG_Ferment');
+  assert.ok(stuckAction);
+  assert.ok(
+    stuckAction.steps.some((s) => s.includes('Yeast Hulls غیرفعال'))
+  );
+});
+
 

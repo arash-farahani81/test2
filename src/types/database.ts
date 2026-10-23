@@ -45,6 +45,7 @@ export interface WineBatch {
   mlfPolicy?: 'no_mlf' | 'spontaneous' | 'inoculated';
   updatedAtMs?: number;
   protocolParamsSnapshot?: Record<string, number | string>;
+  selectedYeastByTank?: Partial<Record<TankId, string>>;
 }
 
 export interface ChemicalAddition {
@@ -143,6 +144,74 @@ export interface UniProtProteinData {
   ecNumber?: string;
 }
 
+export type EquipmentPresetId =
+  | 'full_sardasht_pro'
+  | 'standard_artisan_home'
+  | 'minimal_plus_kit'
+  | 'custom';
+
+export type DensityInstrumentType = 'both' | 'hydrometer_only' | 'refractometer_only';
+export type PhInstrumentType = 'digital_001' | 'strips_or_pocket' | 'none';
+export type TaInstrumentType = 'naoh_burette' | 'colorimetric_kit' | 'none';
+export type So2InstrumentType = 'ripper_iodine' | 'aeration_oxidation' | 'none';
+
+export type RedTankConfigType = 'dual_220l_split' | 'single_primary' | 'small_30_60l_barrels';
+export type AgingVesselConfigType =
+  | 'carboys_132l_no_headspace'
+  | 'partial_headspace_vessels'
+  | 'oak_barrel_or_ss';
+export type InertGasSystemType = 'co2_cylinder_or_dry_ice' | 'argon_or_wine_saver' | 'none';
+export type CoolingSystemType =
+  | 'glycol_or_split_ac'
+  | 'ice_bottles_and_wet_towel'
+  | 'ambient_only';
+export type ColdStabMethodType =
+  | 'fridge_or_winter_balcony'
+  | 'natural_winter_cellar'
+  | 'none_warm_climate';
+export type PressingMethodType =
+  | 'basket_press_mesh'
+  | 'nylon_straining_bag_manual'
+  | 'pneumatic_or_bladder';
+export type TransferAndBottlingMethodType =
+  | 'pump_and_045_cartridge'
+  | 'gravity_siphon_decant_only';
+
+export interface AvailableReagentsConfig {
+  hasBactilessOrLysozyme: boolean;
+  hasFermaidOAndK: boolean;
+  hasAscorbicAcid: boolean;
+  hasCopperSulfate: boolean;
+  hasPotassiumBicarbonate: boolean;
+  hasOakChipsOrStaves: boolean;
+}
+
+export interface CellarEquipmentProfile {
+  presetId: EquipmentPresetId;
+  onboardingCompleted: boolean;
+  updatedAtMs: number;
+  densityInstrument: DensityInstrumentType;
+  phInstrument: PhInstrumentType;
+  taInstrument: TaInstrumentType;
+  so2Instrument: So2InstrumentType;
+  hasPrecisionScale001g: boolean;
+  hasPaperChromatographyMLF: boolean;
+  redTankConfig: RedTankConfigType;
+  primaryTankCount: 1 | 2;
+  primaryRedMashVolumeL: number;
+  postPressCarboyVolumeL: number;
+  producesRoseSaignee: boolean;
+  roseTankVolumeL: number;
+  agingVesselConfig: AgingVesselConfigType;
+  inertGasSystem: InertGasSystemType;
+  coolingSystem: CoolingSystemType;
+  coldStabilizationMethod: ColdStabMethodType;
+  pressingMethod: PressingMethodType;
+  transferAndBottlingMethod: TransferAndBottlingMethodType;
+  reagents: AvailableReagentsConfig;
+  selectedYeastByTank?: Partial<Record<TankId, string>>;
+}
+
 export interface EnologyDatabaseExport {
   version: string;
   exportedAt: string;
@@ -152,11 +221,71 @@ export interface EnologyDatabaseExport {
   labAnalyses: LabAnalysisRecord[];
   savedCalculations: SavedCalculation[];
   flexibleProtocolParams?: Record<string, number | string>;
+  equipmentProfile?: CellarEquipmentProfile;
 }
 
 // ============================================================================
 // ZOD SCHEMAS FOR PRODUCTION DATA VALIDATION
 // ============================================================================
+
+export const AvailableReagentsConfigSchema = z.object({
+  hasBactilessOrLysozyme: z.boolean(),
+  hasFermaidOAndK: z.boolean(),
+  hasAscorbicAcid: z.boolean(),
+  hasCopperSulfate: z.boolean(),
+  hasPotassiumBicarbonate: z.boolean(),
+  hasOakChipsOrStaves: z.boolean()
+});
+
+export const CellarEquipmentProfileSchema = z.object({
+  presetId: z.enum([
+    'full_sardasht_pro',
+    'standard_artisan_home',
+    'minimal_plus_kit',
+    'custom'
+  ]),
+  onboardingCompleted: z.boolean(),
+  updatedAtMs: z.number(),
+  densityInstrument: z.enum(['both', 'hydrometer_only', 'refractometer_only']),
+  phInstrument: z.enum(['digital_001', 'strips_or_pocket', 'none']),
+  taInstrument: z.enum(['naoh_burette', 'colorimetric_kit', 'none']),
+  so2Instrument: z.enum(['ripper_iodine', 'aeration_oxidation', 'none']),
+  hasPrecisionScale001g: z.boolean(),
+  hasPaperChromatographyMLF: z.boolean(),
+  redTankConfig: z.enum(['dual_220l_split', 'single_primary', 'small_30_60l_barrels']),
+  primaryTankCount: z.union([z.literal(1), z.literal(2)]),
+  primaryRedMashVolumeL: z.number(),
+  postPressCarboyVolumeL: z.number(),
+  producesRoseSaignee: z.boolean(),
+  roseTankVolumeL: z.number(),
+  agingVesselConfig: z.enum([
+    'carboys_132l_no_headspace',
+    'partial_headspace_vessels',
+    'oak_barrel_or_ss'
+  ]),
+  inertGasSystem: z.enum(['co2_cylinder_or_dry_ice', 'argon_or_wine_saver', 'none']),
+  coolingSystem: z.enum([
+    'glycol_or_split_ac',
+    'ice_bottles_and_wet_towel',
+    'ambient_only'
+  ]),
+  coldStabilizationMethod: z.enum([
+    'fridge_or_winter_balcony',
+    'natural_winter_cellar',
+    'none_warm_climate'
+  ]),
+  pressingMethod: z.enum([
+    'basket_press_mesh',
+    'nylon_straining_bag_manual',
+    'pneumatic_or_bladder'
+  ]),
+  transferAndBottlingMethod: z.enum([
+    'pump_and_045_cartridge',
+    'gravity_siphon_decant_only'
+  ]),
+  reagents: AvailableReagentsConfigSchema,
+  selectedYeastByTank: z.record(z.string(), z.string()).optional()
+});
 
 export const TankIdSchema = z.enum(['tank-a', 'tank-b', 'tank-rose']);
 
@@ -204,7 +333,8 @@ export const WineBatchSchema = z.object({
   malicStatus: z.enum(['low', 'medium', 'high', 'unknown']).optional(),
   mlfPolicy: z.enum(['no_mlf', 'spontaneous', 'inoculated']).optional(),
   updatedAtMs: z.number().optional(),
-  protocolParamsSnapshot: z.record(z.string(), z.union([z.number(), z.string()])).optional()
+  protocolParamsSnapshot: z.record(z.string(), z.union([z.number(), z.string()])).optional(),
+  selectedYeastByTank: z.record(z.string(), z.string()).optional()
 });
 
 export const ChemicalAdditionSchema = z.object({
@@ -323,7 +453,105 @@ export const EnologyDatabaseExportSchema = z.object({
   chemicalAdditions: z.array(ChemicalAdditionSchema),
   labAnalyses: z.array(LabAnalysisRecordSchema),
   savedCalculations: z.array(SavedCalculationSchema),
-  flexibleProtocolParams: z.record(z.string(), z.union([z.number(), z.string()])).optional()
+  flexibleProtocolParams: z.record(z.string(), z.union([z.number(), z.string()])).optional(),
+  equipmentProfile: CellarEquipmentProfileSchema.optional()
 });
+
+export const DEFAULT_EQUIPMENT_PROFILE_PRO: CellarEquipmentProfile = {
+  presetId: 'full_sardasht_pro',
+  onboardingCompleted: false,
+  updatedAtMs: 0,
+  densityInstrument: 'both',
+  phInstrument: 'digital_001',
+  taInstrument: 'naoh_burette',
+  so2Instrument: 'ripper_iodine',
+  hasPrecisionScale001g: true,
+  hasPaperChromatographyMLF: true,
+  redTankConfig: 'dual_220l_split',
+  primaryTankCount: 2,
+  primaryRedMashVolumeL: 157,
+  postPressCarboyVolumeL: 132,
+  producesRoseSaignee: true,
+  roseTankVolumeL: 34,
+  agingVesselConfig: 'carboys_132l_no_headspace',
+  inertGasSystem: 'co2_cylinder_or_dry_ice',
+  coolingSystem: 'glycol_or_split_ac',
+  coldStabilizationMethod: 'fridge_or_winter_balcony',
+  pressingMethod: 'basket_press_mesh',
+  transferAndBottlingMethod: 'pump_and_045_cartridge',
+  reagents: {
+    hasBactilessOrLysozyme: true,
+    hasFermaidOAndK: true,
+    hasAscorbicAcid: true,
+    hasCopperSulfate: true,
+    hasPotassiumBicarbonate: true,
+    hasOakChipsOrStaves: true
+  }
+};
+
+export const EQUIPMENT_PRESET_ARTISAN_HOME: CellarEquipmentProfile = {
+  presetId: 'standard_artisan_home',
+  onboardingCompleted: true,
+  updatedAtMs: 0,
+  densityInstrument: 'hydrometer_only',
+  phInstrument: 'digital_001',
+  taInstrument: 'colorimetric_kit',
+  so2Instrument: 'none',
+  hasPrecisionScale001g: true,
+  hasPaperChromatographyMLF: false,
+  redTankConfig: 'single_primary',
+  primaryTankCount: 1,
+  primaryRedMashVolumeL: 157,
+  postPressCarboyVolumeL: 132,
+  producesRoseSaignee: false,
+  roseTankVolumeL: 0,
+  agingVesselConfig: 'carboys_132l_no_headspace',
+  inertGasSystem: 'argon_or_wine_saver',
+  coolingSystem: 'ice_bottles_and_wet_towel',
+  coldStabilizationMethod: 'fridge_or_winter_balcony',
+  pressingMethod: 'basket_press_mesh',
+  transferAndBottlingMethod: 'gravity_siphon_decant_only',
+  reagents: {
+    hasBactilessOrLysozyme: true,
+    hasFermaidOAndK: true,
+    hasAscorbicAcid: false,
+    hasCopperSulfate: false,
+    hasPotassiumBicarbonate: true,
+    hasOakChipsOrStaves: true
+  }
+};
+
+export const EQUIPMENT_PRESET_MINIMAL_PLUS: CellarEquipmentProfile = {
+  presetId: 'minimal_plus_kit',
+  onboardingCompleted: true,
+  updatedAtMs: 0,
+  densityInstrument: 'hydrometer_only',
+  phInstrument: 'strips_or_pocket',
+  taInstrument: 'none',
+  so2Instrument: 'none',
+  hasPrecisionScale001g: false,
+  hasPaperChromatographyMLF: false,
+  redTankConfig: 'small_30_60l_barrels',
+  primaryTankCount: 1,
+  primaryRedMashVolumeL: 50,
+  postPressCarboyVolumeL: 42,
+  producesRoseSaignee: false,
+  roseTankVolumeL: 0,
+  agingVesselConfig: 'carboys_132l_no_headspace',
+  inertGasSystem: 'none',
+  coolingSystem: 'ice_bottles_and_wet_towel',
+  coldStabilizationMethod: 'natural_winter_cellar',
+  pressingMethod: 'nylon_straining_bag_manual',
+  transferAndBottlingMethod: 'gravity_siphon_decant_only',
+  reagents: {
+    hasBactilessOrLysozyme: false,
+    hasFermaidOAndK: false,
+    hasAscorbicAcid: false,
+    hasCopperSulfate: false,
+    hasPotassiumBicarbonate: false,
+    hasOakChipsOrStaves: false
+  }
+};
+
 
 

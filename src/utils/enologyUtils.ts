@@ -454,6 +454,7 @@ export function calculateSNAAmounts(
     dap2RateGL?: number;
     fermaidO3RateGL?: number;
     zincRateGL?: number;
+    yanMultiplierOverride?: number;
   }
 ) {
   const effectiveVolumeL = getEffectiveLiquidVolume(Math.max(0, volumeL), isUnpressedRedMust, mashYieldFactor);
@@ -464,7 +465,13 @@ export function calculateSNAAmounts(
       : Math.max(0, brix);
 
   const strainMultiplier =
-    sgOrStrain === 'low' ? 0.75 : sgOrStrain === 'high' ? 1.10 : 1.05;
+    customRates?.yanMultiplierOverride && customRates.yanMultiplierOverride > 0
+      ? customRates.yanMultiplierOverride
+      : sgOrStrain === 'low'
+      ? 0.75
+      : sgOrStrain === 'high'
+      ? 1.10
+      : 1.05;
 
   const initialSG =
     explicitSG && explicitSG > 0

@@ -35,7 +35,13 @@ export const BatchOnboardingWizardModal: React.FC<
   BatchOnboardingWizardModalProps
 > = ({ isOpen, onClose, onBatchCreated }) => {
   const { params, updateParam } = useFlexibleProtocol();
-  const { setActiveBatchId, setScalePrecision, notifyDataChanged } = useEnologyUi();
+  const {
+    setActiveBatchId,
+    setScalePrecision,
+    notifyDataChanged,
+    equipmentCapabilities,
+    openEquipmentModal
+  } = useEnologyUi();
 
   const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
 
@@ -49,12 +55,18 @@ export const BatchOnboardingWizardModal: React.FC<
   const [grapeWeightInput, setGrapeWeightInput] = useState<string>(
     String(params.grapeWeightKg || 400)
   );
-  const [tankCount, setTankCount] = useState<1 | 2>(2);
+  const [tankCount, setTankCount] = useState<1 | 2>(
+    equipmentCapabilities.effectiveTankCount
+  );
 
   // Step 2: Sugar Source & Mutual Brix/SG Lock
   const [sugarSource, setSugarSource] = useState<
     'hydrometer' | 'refractometer'
-  >('hydrometer');
+  >(
+    equipmentCapabilities.primarySugarInputMode === 'refractometer_brix'
+      ? 'refractometer'
+      : 'hydrometer'
+  );
   const [manualBothSugar, setManualBothSugar] = useState<boolean>(false);
   const [initialSG, setInitialSG] = useState<number>(1.092);
   const [initialSgInput, setInitialSgInput] = useState<string>('1.092');
@@ -62,10 +74,33 @@ export const BatchOnboardingWizardModal: React.FC<
   const [initialBrixInput, setInitialBrixInput] = useState<string>('22.0');
 
   // Step 3: Initial Acidity (pH & TA — Safe empty defaults with gray reference placeholders)
-  const [phKnown, setPhKnown] = useState<boolean>(true);
+  const [phKnown, setPhKnown] = useState<boolean>(
+    equipmentCapabilities.canMeasurePhDirectly
+  );
   const [initialPHInput, setInitialPHInput] = useState<string>('');
-  const [taKnown, setTaKnown] = useState<boolean>(true);
+  const [taKnown, setTaKnown] = useState<boolean>(
+    equipmentCapabilities.canMeasureTaDirectly
+  );
   const [initialTAInput, setInitialTAInput] = useState<string>('');
+
+  useEffect(() => {
+    if (isOpen) {
+      setTankCount(equipmentCapabilities.effectiveTankCount);
+      setSugarSource(
+        equipmentCapabilities.primarySugarInputMode === 'refractometer_brix'
+          ? 'refractometer'
+          : 'hydrometer'
+      );
+      setPhKnown(equipmentCapabilities.canMeasurePhDirectly);
+      setTaKnown(equipmentCapabilities.canMeasureTaDirectly);
+    }
+  }, [
+    isOpen,
+    equipmentCapabilities.effectiveTankCount,
+    equipmentCapabilities.primarySugarInputMode,
+    equipmentCapabilities.canMeasurePhDirectly,
+    equipmentCapabilities.canMeasureTaDirectly
+  ]);
 
   const parsedInitialPH = useMemo(() => {
     if (!phKnown || !initialPHInput.trim()) return null;
@@ -361,6 +396,31 @@ export const BatchOnboardingWizardModal: React.FC<
           {/* STEP 1: Grape Weight & Tank Count */}
           {step === 1 && (
             <div className="space-y-4">
+              <div
+                data-testid="batch-wizard-equipment-sync-banner"
+                className="bg-paper border border-line rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs"
+              >
+                <div className="text-ink leading-relaxed">
+                  <span className="font-bold text-wine">
+                    همگام‌سازی خودکار با پروفایل تجهیزات کارگاه:{' '}
+                  </span>
+                  <span>
+                    تعداد مخازن ({equipmentCapabilities.effectiveTankCount} مخزن)، ابزار قندسنجی (
+                    {equipmentCapabilities.primarySugarInputMode === 'refractometer_brix'
+                      ? 'رفرکتومتر Brix'
+                      : 'هیدرومتر SG'}
+                    ) و پیش‌فرض‌های pH/TA بر اساس تجهیزات ثبت‌شده شما تنظیم شدند.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => openEquipmentModal()}
+                  className="px-3 py-1.5 rounded-lg bg-surface border border-line text-ink font-bold hover:border-wine transition-colors cursor-pointer shrink-0"
+                >
+                  تغییر تجهیزات کارگاه
+                </button>
+              </div>
+
               <div>
                 <label className="block text-xs font-bold text-ink-soft mb-1">
                   نام بچ شراب‌گیری:

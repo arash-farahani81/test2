@@ -106,7 +106,11 @@ export const FermentationTracker: React.FC<FermentationTrackerProps> = ({
     activeBatch,
     tankCount,
     dataVersion,
-    notifyDataChanged
+    notifyDataChanged,
+    equipmentProfile,
+    selectedYeastByTank,
+    getYeastStrainForTank,
+    openYeastSelectorModal
   } = ui;
   const { params: flexParams, plan: flexPlan, isModifiedFromIdeal } = useFlexibleProtocol();
   const batchPlan = useMemo(
@@ -116,6 +120,10 @@ export const FermentationTracker: React.FC<FermentationTrackerProps> = ({
   const [showFlexibleCustomizer, setShowFlexibleCustomizer] = useState<boolean>(false);
 
   const [tankId, setTankId] = useLocalStorageState<TankId>('enology_tracking_selected_tank', effectiveSingleTankId || 'tank-a');
+  const currentTankYeast = useMemo(
+    () => getYeastStrainForTank(tankId),
+    [getYeastStrainForTank, tankId, selectedYeastByTank]
+  );
   const currentBatchId =
     activeBatch?.id ?? (tankId === 'tank-rose' ? 'batch-rose-1403' : 'batch-rasha-1403');
   const defaultRefVol =
@@ -1518,11 +1526,32 @@ export const FermentationTracker: React.FC<FermentationTrackerProps> = ({
       )}
 
       {/* ===================================================================== */}
-      {/* UNIFIED STATUS CARD (Top of Tank Dashboard — 3 Collapsible Rows)       */}
+      {/* ACTIVE TANK YEAST BIOPROCESS STRIP & UNIFIED STATUS CARD              */}
       {/* ===================================================================== */}
+      <div
+        data-testid="tracker-active-yeast-strip"
+        className="rounded-2xl border border-line bg-surface p-3 mb-3 flex flex-wrap items-center justify-between gap-2 text-xs"
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-bold text-ink">
+            {`سویه مخمر این مخزن: ${currentTankYeast.nameFa} (${currentTankYeast.brand})`}
+          </span>
+          <span className="ltr-metric font-medium text-ink-soft">
+            Opt {currentTankYeast.tempOptMinC}–{currentTankYeast.tempOptMaxC}°C | Warn {currentTankYeast.tempWarningC}°C | YAN ×{currentTankYeast.yanMultiplier} | Glycerol {currentTankYeast.glycerolYieldGL} g/L | SO2 +{currentTankYeast.endogenousSo2MgL} mg/L
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={openYeastSelectorModal}
+          className="rounded-lg bg-wine text-white px-3 py-1.5 text-xs font-bold cursor-pointer"
+        >
+          تغییر مخمر این مخزن
+        </button>
+      </div>
+
       {(() => {
         const activeLog = selectedLog || latestLog;
-        const analysis = activeLog ? analyzeLogEntryHealth(activeLog, tankId, additions, flexPlan) : null;
+        const analysis = activeLog ? analyzeLogEntryHealth(activeLog, tankId, additions, flexPlan, currentTankYeast.id) : null;
         void getTargetFreeSO2ByPH;
         const scenarioEval = activeLog ? evaluateEnologicalScenario({
           batchVolumeL: (tankId === 'tank-rose' ? flexPlan.volumes.roseClarifiedFermentL : flexPlan.volumes.redLiquidFermentPerTankL),
@@ -1533,7 +1562,9 @@ export const FermentationTracker: React.FC<FermentationTrackerProps> = ({
           ta: activeLog.taMeasured === false ? (tankId === 'tank-rose' ? 6.8 : 6.5) : (activeLog.ta || 6.8),
           freeSO2: activeLog.freeSO2 !== undefined && activeLog.freeSO2Measured !== false ? activeLog.freeSO2 : 0,
           dayNumber: activeLog.dayNumber,
-          isRose: tankId === 'tank-rose'
+          isRose: tankId === 'tank-rose',
+          equipmentProfile,
+          yeastStrainId: currentTankYeast.id
         }) : null;
         const prediction = predictFermentationCompletion(operationalTankLogs, tankId, targetSGChoice, simTemp);
 

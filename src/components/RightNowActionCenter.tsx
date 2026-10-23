@@ -108,7 +108,13 @@ export const RightNowActionCenter: React.FC<RightNowActionCenterProps> = ({
     navigateToLabTest,
     openQuickLog,
     dataVersion,
-    notifyDataChanged
+    notifyDataChanged,
+    equipmentProfile,
+    equipmentCapabilities,
+    openEquipmentModal,
+    selectedYeastByTank,
+    activeTankYeastStrain,
+    openYeastSelectorModal
   } = useEnologyUi();
 
   const currentTankId: TankId = externalTankId ?? effectiveSingleTankId;
@@ -229,7 +235,9 @@ export const RightNowActionCenter: React.FC<RightNowActionCenterProps> = ({
         skippedReasonsByStepId,
         plan,
         batch: currentBatch,
-        excludeDemo: !hasDemo
+        excludeDemo: !hasDemo,
+        equipmentProfile,
+        selectedYeastByTank
       }),
     [
       logs,
@@ -240,7 +248,9 @@ export const RightNowActionCenter: React.FC<RightNowActionCenterProps> = ({
       skippedReasonsByStepId,
       plan,
       currentBatch,
-      hasDemo
+      hasDemo,
+      equipmentProfile,
+      selectedYeastByTank
     ]
   );
 
@@ -267,7 +277,8 @@ export const RightNowActionCenter: React.FC<RightNowActionCenterProps> = ({
         batch: currentBatch,
         tankId: currentTankId,
         manualConfirmations: bottlingConfirmations,
-        riskOverrideReason
+        riskOverrideReason,
+        equipmentProfile
       }),
     [
       logs,
@@ -276,7 +287,8 @@ export const RightNowActionCenter: React.FC<RightNowActionCenterProps> = ({
       currentBatch,
       currentTankId,
       bottlingConfirmations,
-      riskOverrideReason
+      riskOverrideReason,
+      equipmentProfile
     ]
   );
 
@@ -588,6 +600,30 @@ export const RightNowActionCenter: React.FC<RightNowActionCenterProps> = ({
           </span>
         </p>
         <div className="flex items-center gap-3 text-xs text-ink-soft flex-wrap">
+          <button
+            type="button"
+            onClick={openEquipmentModal}
+            data-testid="today-equipment-badge"
+            className="px-2.5 py-1 rounded-lg bg-surface hover:bg-paper border border-line text-xs text-ink font-medium flex items-center gap-1.5 cursor-pointer transition-colors"
+          >
+            <Scale className="w-3.5 h-3.5 text-wine shrink-0" />
+            <span>
+              پروفایل ابزار: {equipmentCapabilities.presetTitleFa} ({equipmentCapabilities.shortBadgeFa})
+            </span>
+            {equipmentCapabilities.activeSubstitutionsCount > 0 && (
+              <span className="px-1.5 py-0.5 rounded bg-amber-50 border border-warn text-warn font-medium">
+                {equipmentCapabilities.activeSubstitutionsCount} جایگزینی هم‌ارز فعال
+              </span>
+            )}
+          </button>
+          <button
+            type="button"
+            data-testid="today-yeast-strain-badge"
+            onClick={openYeastSelectorModal}
+            className="rounded-lg border border-line bg-surface px-2.5 py-1 text-xs text-ink-soft hover:text-ink hover:border-wine transition-colors cursor-pointer"
+          >
+            {`مخمر فعال: ${activeTankYeastStrain.nameFa} (ضریب YAN: ${activeTankYeastStrain.yanMultiplier} | دمای بهینه: ${activeTankYeastStrain.tempOptMinC}–${activeTankYeastStrain.tempOptMaxC}°C)`}
+          </button>
           <div className="flex items-center gap-2">
             <span>واژه‌نامه:</span>
             <GlossaryTerm termKey="kms" labelOverride="KMS" />
@@ -718,6 +754,24 @@ export const RightNowActionCenter: React.FC<RightNowActionCenterProps> = ({
                 </p>
               )}
 
+            {primaryAction.reagentSubstitutionWarningFa && (
+              <div
+                data-testid="hero-reagent-substitution-banner"
+                className="mt-3 bg-amber-50 border border-warn rounded-lg p-3 text-xs text-ink"
+              >
+                {primaryAction.reagentSubstitutionWarningFa}
+              </div>
+            )}
+
+            {primaryAction.equipmentAdaptationNoteFa && (
+              <div
+                data-testid="hero-equipment-adaptation-note"
+                className="mt-2.5 bg-paper border border-line rounded-lg p-2.5 text-xs text-ink-soft"
+              >
+                راهنمای منطبق با ابزار کارگاه شما: {primaryAction.equipmentAdaptationNoteFa}
+              </div>
+            )}
+
             {/* Flat Tank Dose Rows */}
             <ul className="mt-4 divide-y divide-line">
               {primaryAction.tankRows.map((r) => (
@@ -733,6 +787,11 @@ export const RightNowActionCenter: React.FC<RightNowActionCenterProps> = ({
                       {r.compoundFa} ({r.volumeContextFa})
                       {r.isCompletedForTank ? ' — ثبت‌شده' : ''}
                     </span>
+                    {r.stockSyringeHintFa && (
+                      <p className="text-xs text-wine font-medium mt-1">
+                        {r.stockSyringeHintFa}
+                      </p>
+                    )}
                   </div>
                   <span className="ltr-metric text-3xl font-bold text-ink">
                     {r.doseValue}{' '}
@@ -1530,6 +1589,17 @@ export const RightNowActionCenter: React.FC<RightNowActionCenterProps> = ({
 
           {(showBottlingGate || showAllDetails) && (
             <div className="mt-3 pt-3 border-t border-line space-y-3">
+              {!equipmentCapabilities.canMeasureFreeSo2Directly && (
+                <div
+                  data-testid="bottling-gate-stoichiometric-so2-badge"
+                  className="bg-amber-50/70 border border-warn rounded-lg p-2.5 text-xs text-ink flex items-center gap-2"
+                >
+                  <FlaskConical className="w-4 h-4 text-warn shrink-0" />
+                  <span>
+                    مسیر تأیید استوکیومتری KMS فعال است (پروفایل بدون کیت تیتراسیون SO₂ آزاد — محاسبه بر اساس دوز تجمعی KMS ثبت‌شده با ضریب حاشیه ایمنی)
+                  </span>
+                </div>
+              )}
               {bottlingGate.executionMode === 'override_with_risk' && (
                 <div className="bg-red-50 text-ink border border-danger rounded-lg p-3 space-y-1 text-xs">
                   <div className="font-bold text-danger flex items-center gap-1.5">

@@ -34,8 +34,83 @@ import { useLocalStorageState } from '../utils/useLocalStorage.ts';
 import { exportDocxReport } from '../utils/exportDocxReport.ts';
 import { enologyDb } from '../db/enologyDatabase.ts';
 import { BioscienceDatabaseView } from './BioscienceDatabaseView.tsx';
+import type { CellarEquipmentProfile } from '../types/index.ts';
 
 export type Pillar4SubView = 'master-protocol' | 'bioscience-kb' | 'export-backup';
+
+export function getBomRowReagentStatus(
+  materialName: string,
+  profile: CellarEquipmentProfile
+): { available: boolean; badgeFa: string; substitutionFa: string | null } {
+  const r = profile.reagents;
+  const norm = materialName.replace(/\u200c/g, '');
+
+  if (norm.includes('بکتیلس') || norm.includes('کیتوزان') || /Bactiless/i.test(norm)) {
+    return {
+      available: r.hasBactilessOrLysozyme,
+      badgeFa: r.hasBactilessOrLysozyme ? 'موجود در کارگاه' : 'ناموجود در کارگاه',
+      substitutionFa: r.hasBactilessOrLysozyme
+        ? null
+        : 'سرمای زیر ۱۲ درجه + حفظ دقیق SO2 آزاد بالای ۳۰ mg/L'
+    };
+  }
+  if (
+    norm.includes('Fermaid') ||
+    norm.includes('Go-Ferm') ||
+    norm.includes('DAP') ||
+    norm.includes('دیآمونیوم')
+  ) {
+    return {
+      available: r.hasFermaidOAndK,
+      badgeFa: r.hasFermaidOAndK ? 'موجود در کارگاه' : 'ناموجود در کارگاه',
+      substitutionFa: r.hasFermaidOAndK
+        ? null
+        : 'جایگزینی با DAP غذایی و مخمر نانوایی جوشانده‌شده (BBY)'
+    };
+  }
+  if (norm.includes('آسکوربیک')) {
+    return {
+      available: r.hasAscorbicAcid,
+      badgeFa: r.hasAscorbicAcid ? 'موجود در کارگاه' : 'ناموجود در کارگاه',
+      substitutionFa: r.hasAscorbicAcid
+        ? null
+        : 'اختیاری — سولفیت آزاد استاندارد برای حفاظت کافی است'
+    };
+  }
+  if (norm.includes('سولفات مس')) {
+    return {
+      available: r.hasCopperSulfate,
+      badgeFa: r.hasCopperSulfate ? 'موجود در کارگاه' : 'ناموجود در کارگاه',
+      substitutionFa: r.hasCopperSulfate
+        ? null
+        : 'هوادهی splashing در صورت بروز بوی H2S'
+    };
+  }
+  if (norm.includes('بیکربنات') || /KHCO3/i.test(norm)) {
+    return {
+      available: r.hasPotassiumBicarbonate,
+      badgeFa: r.hasPotassiumBicarbonate ? 'موجود در کارگاه' : 'ناموجود در کارگاه',
+      substitutionFa: r.hasPotassiumBicarbonate
+        ? null
+        : 'کاهش طبیعی اسید از طریق سرمادهی طولانی‌تر (رسوب تارتارات)'
+    };
+  }
+  if (norm.includes('بلوط') || /Oak/i.test(norm)) {
+    return {
+      available: r.hasOakChipsOrStaves,
+      badgeFa: r.hasOakChipsOrStaves ? 'موجود در کارگاه' : 'ناموجود در کارگاه',
+      substitutionFa: r.hasOakChipsOrStaves
+        ? null
+        : 'پرورش خالص میوه‌ای در ظروف شیشه‌ای یا استیل بدون چوب'
+    };
+  }
+
+  return {
+    available: true,
+    badgeFa: 'موجود / پایه',
+    substitutionFa: null
+  };
+}
 
 interface MasterProtocolViewProps {
   onNavigateToTracking?: () => void;
@@ -80,7 +155,29 @@ export const MasterProtocolView: React.FC<MasterProtocolViewProps> = ({
     true
   );
 
-  const { activeBatch, effectiveSingleTankId } = useEnologyUi();
+  const {
+    activeBatch,
+    effectiveSingleTankId,
+    equipmentProfile,
+    equipmentCapabilities,
+    openEquipmentModal,
+    getYeastStrainForTank,
+    openYeastSelectorModal
+  } = useEnologyUi();
+  const strainA = getYeastStrainForTank('tank-a');
+  const strainB = getYeastStrainForTank('tank-b');
+  const strainRose = getYeastStrainForTank('tank-rose');
+  const produceRoseSaignee =
+    equipmentCapabilities.produceRoseSaignee ?? equipmentProfile.producesRoseSaignee;
+  const reagentCounts = useMemo(() => {
+    const vals = Object.values(equipmentProfile.reagents);
+    const availableCount = vals.filter(Boolean).length;
+    return {
+      availableCount,
+      missingCount: vals.length - availableCount,
+      totalCount: vals.length
+    };
+  }, [equipmentProfile.reagents]);
   const { params: flexParams, plan: flexPlan } = useFlexibleProtocol();
   const batchPlan = useMemo(
     () =>
@@ -253,6 +350,69 @@ export const MasterProtocolView: React.FC<MasterProtocolViewProps> = ({
               )}
             </div>
 
+            {/* Protocol Equipment & Inventory Bar */}
+            <div
+              data-testid="protocol-equipment-inventory-bar"
+              className="bg-surface border-b border-line px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 no-print"
+            >
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="font-bold text-ink flex items-center gap-1.5">
+                  <Wrench className="w-4 h-4 text-wine shrink-0" />
+                  <span>پروفایل تجهیزات و موجودی مواد:</span>
+                </span>
+                <span className="px-2.5 py-1 rounded-lg bg-paper border border-line text-ink font-semibold">
+                  {!equipmentProfile.hasPrecisionScale001g
+                    ? 'توزین با محلول استوک ۱۰٪'
+                    : 'توزین مستقیم روی ترازو'}
+                </span>
+                <span className="px-2.5 py-1 rounded-lg bg-paper border border-line text-ink font-semibold">
+                  {equipmentCapabilities.effectiveTankCount === 1
+                    ? '۱ مخزن یکپارچه'
+                    : '۲ مخزن متقارن A/B'}
+                </span>
+                <span
+                  className={`px-2.5 py-1 rounded-lg border font-semibold ${
+                    produceRoseSaignee
+                      ? 'bg-emerald-50 border-emerald-200 text-ok'
+                      : 'bg-paper border-line text-ink-soft'
+                  }`}
+                >
+                  {produceRoseSaignee ? 'سهم رُزه فعال' : 'بدون رُزه (۱۰۰٪ قرمز)'}
+                </span>
+                <span
+                  className={`px-2.5 py-1 rounded-lg border font-semibold ${
+                    reagentCounts.missingCount === 0
+                      ? 'bg-emerald-50 border-emerald-200 text-ok'
+                      : 'bg-amber-50 border-amber-200 text-warn'
+                  }`}
+                >
+                  موجودی معرف‌ها: {reagentCounts.availableCount} موجود /{' '}
+                  {reagentCounts.missingCount} کسری از {reagentCounts.totalCount}
+                </span>
+                <span className="px-2.5 py-1 rounded-lg bg-paper border border-line text-ink font-semibold ltr-metric">
+                  {`مخمرها: مخزن A (${strainA.code}) • مخزن B (${strainB.code}) • رُزه (${strainRose.code})`}
+                </span>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={openYeastSelectorModal}
+                  className="px-3 py-1.5 rounded-lg bg-paper border border-line text-ink hover:border-wine text-xs font-bold transition-colors cursor-pointer"
+                >
+                  دانشنامه ۳۶ مخمر
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openEquipmentModal()}
+                  className="px-3 py-1.5 rounded-lg bg-wine text-white text-xs font-bold hover:opacity-90 transition-opacity cursor-pointer shrink-0 flex items-center gap-1.5"
+                >
+                  <Wrench className="w-3.5 h-3.5" />
+                  <span>ویرایش موجودی مواد و تجهیزات</span>
+                </button>
+              </div>
+            </div>
+
             {/* Navigation Tabs */}
             <div className="bg-paper border-b border-line p-2 flex flex-wrap gap-1.5 no-print">
               <button
@@ -398,39 +558,78 @@ export const MasterProtocolView: React.FC<MasterProtocolViewProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-stone-200">
-                  {filteredMaterials.map((item, idx) => (
-                    <tr
-                      key={item.row}
-                      className={`hover:bg-rose-50/40 transition-colors ${
-                        idx % 2 === 1 ? 'bg-stone-50' : 'bg-white'
-                      }`}
-                    >
-                      <td className="py-2.5 px-2.5 text-center font-bold text-stone-600 border-l border-stone-200">
-                        {item.row}
-                      </td>
-                      <td className="py-2.5 px-3 font-bold text-stone-900 border-l border-stone-200">
-                        {item.name}
-                      </td>
-                      <td className="py-2.5 px-3 text-center font-bold text-rose-900 border-l border-stone-200">
-                        {item.totalAmount}
-                      </td>
-                      <td className="py-2.5 px-3 text-stone-700 border-l border-stone-200 whitespace-pre-line text-xs">
-                        {item.doseRate}
-                      </td>
-                      <td className="py-2.5 px-3 text-stone-800 border-l border-stone-200 whitespace-pre-line text-xs">
-                        {item.tankA}
-                      </td>
-                      <td className="py-2.5 px-3 text-stone-800 border-l border-stone-200 whitespace-pre-line text-xs">
-                        {item.tankB}
-                      </td>
-                      <td className="py-2.5 px-3 text-stone-800 border-l border-stone-200 whitespace-pre-line text-xs">
-                        {item.roseShare}
-                      </td>
-                      <td className="py-2.5 px-3 text-stone-600 text-xs">
-                        {item.purpose}
-                      </td>
-                    </tr>
-                  ))}
+                  {filteredMaterials.map((item, idx) => {
+                    const reagentStatus = getBomRowReagentStatus(
+                      item.name,
+                      equipmentProfile
+                    );
+                    return (
+                      <tr
+                        key={item.row}
+                        className={`hover:bg-rose-50/40 transition-colors ${
+                          idx % 2 === 1 ? 'bg-stone-50' : 'bg-white'
+                        }`}
+                      >
+                        <td className="py-2.5 px-2.5 text-center font-bold text-stone-600 border-l border-stone-200">
+                          {item.row}
+                        </td>
+                        <td className="py-2.5 px-3 font-bold text-stone-900 border-l border-stone-200">
+                          <div>{item.name}</div>
+                          <div className="mt-1.5 flex flex-col items-start gap-1">
+                            <span
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-xs font-semibold ${
+                                reagentStatus.available
+                                  ? 'bg-emerald-50 text-ok border-emerald-200'
+                                  : 'bg-amber-50 text-warn border-amber-200'
+                              }`}
+                            >
+                              {reagentStatus.available ? (
+                                <CheckCircle2 className="w-3 h-3 shrink-0" />
+                              ) : (
+                                <AlertTriangle className="w-3 h-3 shrink-0" />
+                              )}
+                              <span>{reagentStatus.badgeFa}</span>
+                            </span>
+                            {!reagentStatus.available &&
+                              reagentStatus.substitutionFa && (
+                                <span className="text-xs font-normal text-warn leading-relaxed">
+                                  جایگزین: {reagentStatus.substitutionFa}
+                                </span>
+                              )}
+                          </div>
+                        </td>
+                        <td className="py-2.5 px-3 text-center font-bold text-rose-900 border-l border-stone-200">
+                          {item.totalAmount}
+                        </td>
+                        <td className="py-2.5 px-3 text-stone-700 border-l border-stone-200 whitespace-pre-line text-xs">
+                          {item.doseRate}
+                        </td>
+                        <td className="py-2.5 px-3 text-stone-800 border-l border-stone-200 whitespace-pre-line text-xs">
+                          {item.tankA}
+                        </td>
+                        <td className="py-2.5 px-3 text-stone-800 border-l border-stone-200 whitespace-pre-line text-xs">
+                          {item.tankB}
+                        </td>
+                        <td
+                          className={`py-2.5 px-3 border-l border-stone-200 whitespace-pre-line text-xs ${
+                            produceRoseSaignee
+                              ? 'text-stone-800'
+                              : 'text-ink-soft opacity-60'
+                          }`}
+                        >
+                          <div>{item.roseShare}</div>
+                          {!produceRoseSaignee && (
+                            <div className="mt-1 text-xs text-ink-soft font-medium">
+                              غیرفعال در پروفایل شما (۱۰۰٪ قرمز)
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 text-stone-600 text-xs">
+                          {item.purpose}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

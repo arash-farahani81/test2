@@ -1,9 +1,11 @@
-import type {
-  ChemicalAddition,
-  FermentationLogEntry,
-  LabAnalysisRecord,
-  TankId,
-  WineBatch
+import {
+  DEFAULT_EQUIPMENT_PROFILE_PRO,
+  type CellarEquipmentProfile,
+  type ChemicalAddition,
+  type FermentationLogEntry,
+  type LabAnalysisRecord,
+  type TankId,
+  type WineBatch
 } from '../types/index.ts';
 import {
   MASTER_PROTOCOL_CONFIG,
@@ -13,12 +15,74 @@ import {
 } from '../data/masterProtocolConfig.ts';
 import {
   calculateDynamicSGTriggers,
-  getContinuousTargetFreeSO2ByPH
+  calculateStockSolutionPlan,
+  getContinuousTargetFreeSO2ByPH,
+  type StockCompoundCategory
 } from './enologyUtils.ts';
 import {
   calculateRecentLogVelocity,
   sortFermentationLogs
 } from './trackingCalculations.ts';
+import {
+  evaluateEquipmentCapabilities,
+  formatDoseForEquipment,
+  getMilestoneEquipmentAdaptation,
+  type EquipmentProfileInput
+} from './equipmentAdapterEngine.ts';
+import {
+  computeYeastAdjustedSnaPlan,
+  getYeastStrainById
+} from '../data/yeastStrainsData.ts';
+
+export type RightNowEquipmentProfileInput = Omit<
+  Partial<EquipmentProfileInput>,
+  'densityInstrument' | 'availableReagents'
+> & {
+  densityInstrument?: EquipmentProfileInput['densityInstrument'] | 'none';
+  so2MeasurementMethod?: 'ripper_kit' | 'test_strips' | 'stock_calculation_only';
+  hasRipperKit?: boolean;
+  availableReagents?: Partial<EquipmentProfileInput['reagents']> &
+    Record<string, boolean | undefined>;
+};
+
+function resolveEquipmentProfileInput(
+  raw?: RightNowEquipmentProfileInput
+): EquipmentProfileInput | undefined {
+  if (!raw) return undefined;
+  const avail = raw.availableReagents;
+  return {
+    ...DEFAULT_EQUIPMENT_PROFILE_PRO,
+    ...raw,
+    densityInstrument:
+      raw.densityInstrument === 'none'
+        ? 'none_sensory'
+        : (raw.densityInstrument ?? DEFAULT_EQUIPMENT_PROFILE_PRO.densityInstrument),
+    so2Instrument:
+      raw.so2Instrument ?? DEFAULT_EQUIPMENT_PROFILE_PRO.so2Instrument,
+    reagents: {
+      ...DEFAULT_EQUIPMENT_PROFILE_PRO.reagents,
+      ...(raw.reagents ?? {}),
+      ...(avail
+        ? {
+            hasKms: avail.hasKms ?? avail.kms ?? true,
+            hasFermaidO: avail.hasFermaidO ?? avail.fermaidO ?? true,
+            hasFermaidKOrDap:
+              avail.hasFermaidKOrDap ??
+              (avail.fermaidK !== undefined ? Boolean(avail.fermaidK) : true),
+            hasBactilessChitosan:
+              avail.hasBactilessChitosan ??
+              (avail.bactiless !== undefined ? Boolean(avail.bactiless) : true),
+            hasPecticEnzyme: avail.hasPecticEnzyme ?? avail.pecticEnzyme ?? true,
+            hasEnologicalTannins: avail.hasEnologicalTannins ?? avail.enologicalTannin ?? true,
+            hasPotassiumBitartrateKht:
+              avail.hasPotassiumBitartrateKht ?? avail.potassiumBitartrate ?? true,
+            hasAscorbicAcid: avail.hasAscorbicAcid ?? avail.ascorbicAcid ?? true,
+            hasCopperSulfate: avail.hasCopperSulfate ?? avail.copperSulfate ?? true
+          }
+        : {})
+    }
+  };
+}
 
 export type MilestoneState =
   | 'pending'
@@ -38,6 +102,7 @@ export interface MilestoneTankRow {
   compoundFa: string;
   volumeContextFa: string;
   doseAmountTextFa: string;
+  stockSyringeHintFa?: string;
   isCompletedForTank: boolean;
   additionsToRecord: Array<Omit<ChemicalAddition, 'id'>>;
 }
@@ -62,6 +127,8 @@ export interface RightNowMilestone {
   estimatedHoursUntilDue?: { min: number; max: number };
   skippedReasonFa?: string;
   snoozedUntilMs?: number;
+  equipmentAdaptationNoteFa?: string;
+  reagentSubstitutionWarningFa?: string;
   tankRows: MilestoneTankRow[];
 }
 
@@ -313,6 +380,8 @@ export function evaluateRightNowQueue(options: {
   batch?: WineBatch;
   batchId?: string;
   excludeDemo?: boolean;
+  equipmentProfile?: RightNowEquipmentProfileInput;
+  selectedYeastByTank?: Partial<Record<TankId, string>>;
 }): RightNowQueueResult {
   const plan = getEffectiveProtocolPlanForBatch(options.batch, options.plan);
   const activeTankId: TankId = options.activeTankId ?? 'tank-a';
@@ -491,6 +560,189 @@ export function evaluateRightNowQueue(options: {
     buildTankRows: () => MilestoneTankRow[];
   }
 
+  const resolvedEquipmentProfile = resolveEquipmentProfileInput(options.equipmentProfile);
+
+  const effectiveTankCount: 1 | 2 =
+    options.batch?.tankCount ??
+    (options.equipmentProfile?.redTankConfiguration === 'single_tank' ||
+    options.equipmentProfile?.redTankConfig === 'single_primary' ||
+    options.equipmentProfile?.redTankConfig === 'small_30_60l_barrels' ||
+    options.equipmentProfile?.primaryTankCount === 1
+      ? 1
+      : 2);
+
+  const produceRose = options.equipmentProfile
+    ? (options.equipmentProfile.produceRoseSaignee ?? options.equipmentProfile.producesRoseSaignee)
+    : true;
+
+  const computeRowStockSyringeHint = (
+    additionsToRecord: Array<Omit<ChemicalAddition, 'id'>>
+  ): string | undefined => {
+    if (!resolvedEquipmentProfile || additionsToRecord.length === 0) {
+      return undefined;
+    }
+    for (const addItem of additionsToRecord) {
+      if (!addItem || addItem.unit !== 'g' || !(addItem.amount > 0)) {
+        continue;
+      }
+      const category: StockCompoundCategory =
+        addItem.compoundType === 'kms' || /kms|متابیسولفیت/i.test(addItem.compoundName)
+          ? 'kms'
+          : addItem.compoundType === 'zinc'
+          ? 'zinc'
+          : addItem.compoundType === 'copper'
+          ? 'copper'
+          : addItem.compoundType === 'tartaric'
+          ? 'tartaric'
+          : addItem.compoundType === 'fermaid_o' ||
+            addItem.compoundType === 'fermaid_k' ||
+            addItem.compoundType === 'yeast'
+          ? 'fermaid_or_yeast'
+          : 'general';
+      const formatted = formatDoseForEquipment({
+        targetDoseGrams: addItem.amount,
+        compoundNameFa: addItem.compoundName,
+        compoundCategory: category,
+        profile: resolvedEquipmentProfile
+      });
+      if (formatted.executionMode === 'stock_syringe') {
+        return formatted.instructionFa.includes('محلول استوک')
+          ? formatted.instructionFa
+          : `محلول استوک: ${formatted.instructionFa}`;
+      }
+      if (
+        (resolvedEquipmentProfile.scalePrecisionGrams === 1 ||
+          resolvedEquipmentProfile.hasPrecisionScale === false) &&
+        Math.abs(addItem.amount - Math.round(addItem.amount)) >= 0.05 &&
+        category === 'kms'
+      ) {
+        const wholeG = Math.floor(addItem.amount);
+        const fracG = Math.round((addItem.amount - wholeG) * 100) / 100;
+        const fracPlan = calculateStockSolutionPlan(fracG > 0 ? fracG : addItem.amount, 1, category);
+        return `${wholeG} گرم توزین مستقیم + کسری با محلول استوک: ${fracPlan.instructionFa}`;
+      }
+    }
+    return undefined;
+  };
+
+  const resolveCustomStrainForTank = (tId: TankId) => {
+    const customId =
+      options.selectedYeastByTank?.[tId] ??
+      (options.equipmentProfile as { selectedYeastByTank?: Partial<Record<TankId, string>> } | undefined)
+        ?.selectedYeastByTank?.[tId] ??
+      options.batch?.selectedYeastByTank?.[tId];
+    if (!customId) return null;
+    const defaultId = tId === 'tank-rose' ? 'lalvin-rhone-4600' : 'lalvin-rc-212';
+    return customId !== defaultId ? getYeastStrainById(customId, tId === 'tank-rose') : null;
+  };
+
+  const applyCustomYeastToRow = (
+    milestoneId: string,
+    tId: TankId,
+    labelFa: string,
+    built: {
+      doseValue: string;
+      doseUnit: string;
+      compoundFa: string;
+      volumeContextFa: string;
+      doseAmountTextFa: string;
+      additionsToRecord: Array<Omit<ChemicalAddition, 'id'>>;
+    }
+  ) => {
+    const customStrain = resolveCustomStrainForTank(tId);
+    if (
+      !customStrain ||
+      !['yeast-inoculation', 'sna-1', 'sna-2-dap', 'sna-3-organic'].includes(milestoneId)
+    ) {
+      return built;
+    }
+
+    const isRoseTank = tId === 'tank-rose';
+    const volL = isRoseTank ? roseFermentL : redLiquidPerTankL;
+    const snaPlan = computeYeastAdjustedSnaPlan({
+      strainId: customStrain.id,
+      isRose: isRoseTank,
+      volumeL: volL,
+      brix: plan.params.initialBrix,
+      initialSG: plan.triggers.initialSG,
+      naturalYAN: plan.params.naturalMustYANMgL
+    });
+
+    if (milestoneId === 'yeast-inoculation') {
+      const nextAdds = built.additionsToRecord.map((item, idx) => {
+        if (idx === 0) {
+          return {
+            ...item,
+            compoundName: `مخمر ${customStrain.nameEn}`,
+            amount: snaPlan.yeastGrams
+          };
+        }
+        if (idx === 1) {
+          return {
+            ...item,
+            amount: snaPlan.goFermGrams
+          };
+        }
+        return item;
+      });
+      return {
+        ...built,
+        compoundFa: `مخمر ${customStrain.code} + Go-Ferm`,
+        doseValue: `${snaPlan.yeastGrams} + ${snaPlan.goFermGrams}`,
+        doseAmountTextFa: `${snaPlan.yeastGrams} g مخمر ${customStrain.code} + ${snaPlan.goFermGrams} g Go-Ferm برای ${volL} L (${labelFa})`,
+        additionsToRecord: nextAdds
+      };
+    }
+
+    if (milestoneId === 'sna-1') {
+      const nextAdds = built.additionsToRecord.map((item, idx) =>
+        idx === 0 ? { ...item, amount: snaPlan.fermaidO_1 } : item
+      );
+      const nextDoseVal =
+        isRoseTank && built.additionsToRecord.length > 1
+          ? `${snaPlan.fermaidO_1} + ${built.additionsToRecord[1].amount}`
+          : `${snaPlan.fermaidO_1}`;
+      return {
+        ...built,
+        doseValue: nextDoseVal,
+        doseAmountTextFa: `${snaPlan.fermaidO_1} g Fermaid O (${customStrain.code}) برای ${volL} L (${labelFa})`,
+        additionsToRecord: nextAdds
+      };
+    }
+
+    if (milestoneId === 'sna-3-organic') {
+      const nextAdds = built.additionsToRecord.map((item, idx) =>
+        idx === 0 ? { ...item, amount: snaPlan.fermaidO_3 } : item
+      );
+      return {
+        ...built,
+        doseValue: `${snaPlan.fermaidO_3}`,
+        doseAmountTextFa: `${snaPlan.fermaidO_3} g Fermaid O (${customStrain.code}) برای ${volL} L (${labelFa})`,
+        additionsToRecord: nextAdds
+      };
+    }
+
+    if (milestoneId === 'sna-2-dap') {
+      const nextAdds = built.additionsToRecord.map((item, idx) => {
+        if (idx === 0) return { ...item, amount: snaPlan.fermaidK_2 };
+        if (idx === 1) return { ...item, amount: snaPlan.dap_2 };
+        if (idx === 2) return { ...item, amount: snaPlan.zinc_2 };
+        return item;
+      });
+      const nextDoseVal = isRoseTank
+        ? `${snaPlan.fermaidK_2} + ${snaPlan.dap_2}`
+        : `${snaPlan.fermaidK_2} + ${snaPlan.dap_2} + ${snaPlan.zinc_2}`;
+      return {
+        ...built,
+        doseValue: nextDoseVal,
+        doseAmountTextFa: `${snaPlan.fermaidK_2} g Fermaid K + ${snaPlan.dap_2} g DAP (${customStrain.code}) برای ${volL} L (${labelFa})`,
+        additionsToRecord: nextAdds
+      };
+    }
+
+    return built;
+  };
+
   const makeRedTanksRows = (
     milestoneId: string,
     stepIds: number[],
@@ -504,7 +756,7 @@ export function evaluateRightNowQueue(options: {
     }
   ): MilestoneTankRow[] => {
     const pairs: Array<['tank-a' | 'tank-b', string]> =
-      options.batch?.tankCount === 1
+      effectiveTankCount === 1
         ? [['tank-a', 'مخزن A']]
         : [
             ['tank-a', 'مخزن A'],
@@ -518,7 +770,13 @@ export function evaluateRightNowQueue(options: {
         completedStepIds,
         stepIds
       );
-      const built = buildForTank(tId, labelFa);
+      const built = applyCustomYeastToRow(
+        milestoneId,
+        tId,
+        labelFa,
+        buildForTank(tId, labelFa)
+      );
+      const stockSyringeHintFa = computeRowStockSyringeHint(built.additionsToRecord);
       return {
         tankId: tId,
         tankLabelFa: labelFa,
@@ -527,6 +785,7 @@ export function evaluateRightNowQueue(options: {
         compoundFa: built.compoundFa,
         volumeContextFa: built.volumeContextFa,
         doseAmountTextFa: built.doseAmountTextFa,
+        stockSyringeHintFa,
         isCompletedForTank,
         additionsToRecord: built.additionsToRecord.map((item) => ({
           ...item,
@@ -552,7 +811,10 @@ export function evaluateRightNowQueue(options: {
       volumeContextFa: string;
     }
   ): MilestoneTankRow[] => {
-    if (options.batch?.tankCount === 1 && activeTankId !== 'tank-rose') {
+    if (
+      (effectiveTankCount === 1 || produceRose === false) &&
+      activeTankId !== 'tank-rose'
+    ) {
       return rows;
     }
     const roseAdds = activeAdditions.filter((a) => a.tankId === 'tank-rose');
@@ -562,16 +824,26 @@ export function evaluateRightNowQueue(options: {
       completedStepIds,
       stepIds
     );
-    rows.push({
-      tankId: 'tank-rose',
-      tankLabelFa: 'گالن رُزه',
+    const adaptedRose = applyCustomYeastToRow(milestoneId, 'tank-rose', 'گالن رُزه', {
       doseValue: structuredMeta?.doseValue ?? '',
       doseUnit: structuredMeta?.doseUnit ?? 'g',
       compoundFa: structuredMeta?.compoundFa ?? '',
       volumeContextFa: structuredMeta?.volumeContextFa ?? '',
       doseAmountTextFa,
+      additionsToRecord
+    });
+    const stockSyringeHintFa = computeRowStockSyringeHint(adaptedRose.additionsToRecord);
+    rows.push({
+      tankId: 'tank-rose',
+      tankLabelFa: 'گالن رُزه',
+      doseValue: adaptedRose.doseValue,
+      doseUnit: adaptedRose.doseUnit,
+      compoundFa: adaptedRose.compoundFa,
+      volumeContextFa: adaptedRose.volumeContextFa,
+      doseAmountTextFa: adaptedRose.doseAmountTextFa,
+      stockSyringeHintFa,
       isCompletedForTank: roseDone,
-      additionsToRecord: additionsToRecord.map((item) => ({
+      additionsToRecord: adaptedRose.additionsToRecord.map((item) => ({
         ...item,
         batchId: item.batchId || roseBatchId,
         milestoneId: item.milestoneId ?? milestoneId,
@@ -1430,10 +1702,15 @@ export function evaluateRightNowQueue(options: {
     'phase2-tannin',
     'pressing'
   ]);
-  const effectiveBlueprints =
-    activeTankId === 'tank-rose'
-      ? blueprints.filter((bp) => !redOnlyMilestoneIds.has(bp.id))
-      : blueprints;
+  const effectiveBlueprints = blueprints.filter((bp) => {
+    if (activeTankId === 'tank-rose' && redOnlyMilestoneIds.has(bp.id)) {
+      return false;
+    }
+    if (produceRose === false && activeTankId !== 'tank-rose' && bp.id === 'saignee-rose') {
+      return false;
+    }
+    return true;
+  });
 
   const allMilestones: RightNowMilestone[] = effectiveBlueprints.map((bp) => {
     const tankRows = bp.buildTankRows();
@@ -1521,12 +1798,44 @@ export function evaluateRightNowQueue(options: {
     const canMarkDone =
       state === 'due' || state === 'missed' || state === 'pending';
 
+    const adaptMilestoneId =
+      bp.id === 'day11-bactiless-kms-lock'
+        ? 'day11-bactiless'
+        : bp.id === 'day65-cold-stab'
+        ? 'cold-stabilization'
+        : bp.id === 'day100-bottling'
+        ? 'pre-bottling-kms-ascorbic'
+        : bp.id;
+    const equipAdapt = resolvedEquipmentProfile
+      ? getMilestoneEquipmentAdaptation(adaptMilestoneId, resolvedEquipmentProfile)
+      : undefined;
+    const explicitFermaidKSubFa =
+      bp.id === 'sna-2-dap' &&
+      options.equipmentProfile?.availableReagents?.fermaidK === false &&
+      !equipAdapt?.substitutionWarningFa
+        ? 'در صورت عدم دسترسی به Fermaid K، دوز نیتروژن معدنی (DAP) را همراه با Fermaid O جایگزین کنید.'
+        : undefined;
+    const explicitBactilessSubFa =
+      bp.id === 'day11-bactiless-kms-lock' &&
+      (options.equipmentProfile?.availableReagents?.bactiless === false ||
+        options.equipmentProfile?.availableReagents?.hasBactilessChitosan === false ||
+        (options.equipmentProfile?.reagents as Record<string, boolean | undefined> | undefined)?.bactiless === false) &&
+      !equipAdapt?.substitutionWarningFa
+        ? 'در غیاب باکتیلس (کیتوزان قارچی)، مهار مالولاکتیک صرفاً متکی به حفظ دقیق سولفیت آزاد (Free SO₂) متناسب با pH و نگهداری در دمای خنک (زیر ۱۴ درجه) است.'
+        : undefined;
+    const substitutionWarningFa =
+      equipAdapt?.substitutionWarningFa ?? explicitFermaidKSubFa ?? explicitBactilessSubFa;
+    const adaptedHowToExecuteFa =
+      substitutionWarningFa
+        ? `${bp.howToExecuteFa}\n• جایگزین تجهیزات: ${substitutionWarningFa}`
+        : bp.howToExecuteFa;
+
     return {
       id: bp.id,
       roadmapStepIds: bp.roadmapStepIds,
       titleFa: bp.titleFa,
       whyFa: bp.whyFa,
-      howToExecuteFa: bp.howToExecuteFa,
+      howToExecuteFa: adaptedHowToExecuteFa,
       scienceNoteFa: bp.scienceNoteFa,
       confidenceLabelFa: bp.confidenceLabelFa,
       triggerType: bp.triggerType,
@@ -1541,6 +1850,8 @@ export function evaluateRightNowQueue(options: {
       estimatedHoursUntilDue,
       skippedReasonFa,
       snoozedUntilMs,
+      equipmentAdaptationNoteFa: equipAdapt?.adaptedHowToFa,
+      reagentSubstitutionWarningFa: substitutionWarningFa,
       tankRows
     };
   });
@@ -1822,6 +2133,7 @@ export function evaluateBottlingReadinessGate(options: {
   };
   riskOverrideReason?: string;
   nowMs?: number;
+  equipmentProfile?: RightNowEquipmentProfileInput;
 }): BottlingReadinessResult {
   const tankId: TankId = options.tankId ?? 'tank-a';
   const isRose = tankId === 'tank-rose';
@@ -1961,22 +2273,43 @@ export function evaluateBottlingReadinessGate(options: {
       ? Math.max(0, (latestLog.dayNumber - so2DayNumber) * 24)
       : Number.POSITIVE_INFINITY;
 
+  const resolvedBottleProfile = resolveEquipmentProfileInput(options.equipmentProfile);
+  const isStockSo2CalcMode =
+    (resolvedBottleProfile !== undefined &&
+      !evaluateEquipmentCapabilities(resolvedBottleProfile).canMeasureFreeSo2Directly) ||
+    (options.equipmentProfile?.so2MeasurementMethod === 'stock_calculation_only' &&
+      !options.equipmentProfile?.hasRipperKit);
+  const hasPreBottlingKmsAdd = tankAdditions.some(
+    (a) =>
+      (a.compoundType === 'kms' ||
+        a.pubchemCid === 24446 ||
+        /kms|متابیسولفیت|متابی‌سولفیت/i.test(`${a.compoundName} ${a.purpose}`)) &&
+      (a.milestoneId === 'pre-bottling-kms-ascorbic' ||
+        a.milestoneId === 'day100-bottling' ||
+        (a.dayNumber ?? 0) >= 11)
+  );
+  const so2StockVerified =
+    isStockSo2CalcMode &&
+    measuredFreeSO2 === undefined &&
+    hasPreBottlingKmsAdd;
+
   const isOverSo2Ceiling =
     measuredFreeSO2 !== undefined && measuredFreeSO2 > so2UpperCeiling;
   const isBelowSo2Min =
     measuredFreeSO2 === undefined || measuredFreeSO2 < contSO2Target.min;
   const so2Passed =
-    measuredFreeSO2 !== undefined &&
-    !isBelowSo2Min &&
-    !isOverSo2Ceiling &&
-    so2AgeHours <= 48;
+    (measuredFreeSO2 !== undefined &&
+      !isBelowSo2Min &&
+      !isOverSo2Ceiling &&
+      so2AgeHours <= 48) ||
+    so2StockVerified;
 
   const hasPhLabRecord = tankAnalyses.some((a) => a.testType === 'ph_meter');
   const isPhMeasured =
     (latestLog !== undefined && latestLog.phMeasured !== false) || hasPhLabRecord;
   const so2DataStatus: BottlingGateCheckItem['dataStatus'] = !so2Passed
     ? 'failed'
-    : isPhMeasured
+    : isPhMeasured || so2StockVerified
     ? 'verified'
     : 'incomplete_data';
   const unmeasuredPhNoteFa = !isPhMeasured
@@ -2017,6 +2350,12 @@ export function evaluateBottlingReadinessGate(options: {
   // Blocking Check 4: Visual Clarity & Zero Gas Bubbles
   const clarityPassed = Boolean(confirmations.clarityConfirmed);
 
+  const noHydrometerSuffixFa =
+    options.equipmentProfile?.densityInstrument === 'none_sensory' ||
+    options.equipmentProfile?.densityInstrument === 'none'
+      ? ' (در حالت بدون چگالی‌سنج: بر اساس توقف کامل حباب قفل هوا، طعم کاملاً خشک بدون شیرینی و شفافیت نسبی)'
+      : '';
+
   const blockingItems: BottlingGateCheckItem[] = [
     {
       id: 'dryness_stability',
@@ -2036,7 +2375,7 @@ export function evaluateBottlingReadinessGate(options: {
         : !drynessSgStable
         ? `مسدود: نیازمند حداقل ۳ ثبت متوالی SG ≤ 0.995 در بازهٔ حداقل ۷ روز و قند باقی‌مانده RS < 2 g/L با تست Clinitest (فعلی: ${lastThreeLogs.length} ثبت، بازهٔ ${daySpan} روز).`
         : 'مسدود: ثبات چگالی SG احراز شده اما تایید آزمایشگاهی قند باقی‌مانده (Clinitest / RS < 2 g/L) الزامی است.',
-      whyFa: 'بطری کردن شراب با قند تخمیرنشده باعث تخمیر مجدد در بطری، پریدن چوب‌پنبه و ترکیدن شیشه می‌شود.'
+      whyFa: `بطری کردن شراب با قند تخمیرنشده باعث تخمیر مجدد در بطری، پریدن چوب‌پنبه و ترکیدن شیشه می‌شود.${noHydrometerSuffixFa}`
     },
     {
       id: 'free_so2_target',
@@ -2044,7 +2383,9 @@ export function evaluateBottlingReadinessGate(options: {
       isBlocking: true,
       status: so2Passed ? 'passed' : 'blocked_red',
       dataStatus: so2DataStatus,
-      detailFa: so2Passed
+      detailFa: so2StockVerified
+        ? `تایید استوکیومتری (حالت بدون کیت ریپر): دوز متابی‌سولفیت پتاسیم (KMS) بر اساس حجم مخزن ثبت شده است.${unmeasuredPhNoteFa}`
+        : so2Passed
         ? `تایید شد: سولفیت آزاد فعلی (${measuredFreeSO2} mg/L) در محدودهٔ هدف pH = ${currentPH.toFixed(2)} قرار دارد.${unmeasuredPhNoteFa}`
         : isOverSo2Ceiling
         ? `مسدود: سولفیت آزاد فعلی (${measuredFreeSO2} mg/L > سقف ${so2UpperCeiling} mg/L)؛ سولفیت آزاد بیش از سقف هدف است (خطر رنگپریدگی و بوی تند گوگرد).${unmeasuredPhNoteFa}`
@@ -2080,8 +2421,14 @@ export function evaluateBottlingReadinessGate(options: {
   ];
 
   // Advisory Checks (5 to 8)
+  const isColdStabSkippedByProfile =
+    options.equipmentProfile?.coldStabMethod === 'skip_cold_stab' ||
+    options.equipmentProfile?.coldStabilizationMethod === 'none_warm_climate';
   const hasKhtAdd = tankAdditions.some((a) => a.compoundType === 'kht');
-  const coldStabDone = hasKhtAdd || Boolean(confirmations.coldStabConfirmedOrSkipped);
+  const coldStabDone =
+    isColdStabSkippedByProfile ||
+    hasKhtAdd ||
+    Boolean(confirmations.coldStabConfirmedOrSkipped);
   const warmTestDone = Boolean(confirmations.warmTestPassed);
   const ascorbicSafe = (measuredFreeSO2 ?? 0) >= 30;
   const sanitationDone = Boolean(confirmations.sanitationConfirmed);
@@ -2092,7 +2439,9 @@ export function evaluateBottlingReadinessGate(options: {
       titleFa: '۵. پایدارسازی سرد ۱۴ روزه (۰ تا +۲ درجه با کرم تارتار)',
       isBlocking: false,
       status: coldStabDone ? 'passed' : 'advisory_amber',
-      detailFa: coldStabDone
+      detailFa: isColdStabSkippedByProfile
+        ? 'معافیت پایدارسازی سرد در پروفایل تجهیزات ثبت شده است (احتمال رسوب بی‌خطر الماس شراب در یخچال وجود دارد).'
+        : coldStabDone
         ? 'پایدارسازی سرد یا معافیت آن ثبت شده است.'
         : 'توصیه‌شده: در صورت عدم سرمازدایی، ممکن است در یخچال کریستال بی‌خطر تارتارات رسوب کند.',
       whyFa: 'جلوگیری از تشکیل الماس‌های شراب (کریستال بی‌تارتارات پتاسیم) در دمای یخچال.'

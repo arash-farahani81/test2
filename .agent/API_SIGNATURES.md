@@ -25,7 +25,7 @@ export function calculateMolecularSO2(freeSO2_ppm: number, pH: number): number;
 export function calculateRefractometerCorrection(origBrix: number, currentRefractometerBrix: number): {
   trueBrix: number; trueSG: number; abv: number; isWortEmpiricalApproximation: true; disclaimerFa: string;
 };
-export function calculateSNAAmounts(volumeL: number, brix?: number, sgOrStrain?: number | 'low' | 'medium' | 'high', naturalYAN?: number, sgOptional?: number, isUnpressedRedMust?: boolean | VolumeBasis, mashYieldFactor?: number, customRates?: { fermaidO1RateGL?: number; fermaidK2RateGL?: number; dap2RateGL?: number; fermaidO3RateGL?: number; zincRateGL?: number }): {
+export function calculateSNAAmounts(volumeL: number, brix?: number, sgOrStrain?: number | 'low' | 'medium' | 'high', naturalYAN?: number, sgOptional?: number, isUnpressedRedMust?: boolean | VolumeBasis, mashYieldFactor?: number, customRates?: { fermaidO1RateGL?: number; fermaidK2RateGL?: number; dap2RateGL?: number; fermaidO3RateGL?: number; zincRateGL?: number; yanMultiplierOverride?: number }): {
   initialSG: number; effectiveVolumeL: number; sugarGL: number; sugarGPerL: number; targetYAN: number; neededYAN: number;
   fermaidO_1: number; fermaidK_2: number; dap_2: number; zinc_2: number; fermaidO_3: number; fermaidK_3: number;
   suppliedChemicalYAN_mgL: number; suppliedBioEquivalentYAN_mgL: number; additionalFermaidOForPureChemicalParityG: number; zincNoteFa: string;
@@ -56,9 +56,9 @@ export function calculateFermentationProgress(sg: number, initialSG?: number, fi
 export function calculateAlcoholByVolume(initialSG: number, currentSG: number): number;
 export function brixToSpecificGravity(brix: number): number;
 export function specificGravityToBrix(sg: number): number;
-export function getCapTemperatureAlertLevel(tempCap: number, isRose?: boolean, currentSG?: number): 'normal' | 'caution' | 'warning' | 'danger';
+export function getCapTemperatureAlertLevel(tempCap: number, isRose?: boolean, currentSG?: number, strainId?: string): 'normal' | 'caution' | 'warning' | 'danger';
 export function sortFermentationLogs(logs: FermentationLogEntry[]): FermentationLogEntry[];
-export function analyzeLogEntryHealth(log: FermentationLogEntry, tankId?: TankId, recordedAdditions?: ChemicalAddition[], planOverride?: DynamicProtocolPlan): LogHealthAnalysis;
+export function analyzeLogEntryHealth(log: FermentationLogEntry, tankId?: TankId, recordedAdditions?: ChemicalAddition[], planOverride?: DynamicProtocolPlan, strainId?: string): LogHealthAnalysis;
 export function compareRealLogsWithBenchmark(realLogs: FermentationLogEntry[], benchmarkLogs: FermentationLogEntry[], tankId?: TankId): BenchmarkComparison;
 export function calculateRecentLogVelocity(sortedLogs: FermentationLogEntry[], initialSGOverride?: number): { recentVelocityPerDay: number; hasObservedVelocity: boolean; referenceSG: number };
 export function calculateVelocity(logs: FermentationLogEntry[]): number;
@@ -70,6 +70,7 @@ export function predictFermentationCompletion(logs: FermentationLogEntry[], tank
 export interface ScenarioInput {
   batchVolumeL: number; currentSG: number; currentBrix: number; tempCapC: number; ph: number; ta: number; freeSO2: number;
   dayNumber?: number; isRose?: boolean; isUnpressedMash?: boolean; isUnpressedRedMust?: boolean;
+  equipmentProfile?: CellarEquipmentProfile; yeastStrainId?: string;
   issues?: { isStuckFermentation?: boolean; hasH2S?: boolean; hasVolatileAcidity?: boolean; hasDryCap?: boolean; hasBitterSeeds?: boolean; hasCloudiness?: boolean };
 }
 export interface CorrectiveAction {
@@ -96,11 +97,18 @@ export interface CumulativeSO2Ledger {
   finalVolumeEquivalentMgL: number; skippedInvalidUnitCount: number; endogenousYeastMgL: number;
   estimatedTotalSO2MgL: number; legalCeilingMgL: number; remainingBudgetMgL: number; isOverBudget: boolean;
   accountingBasisFa: string; estimatedBoundAndVolatilizedRatio: number; measuredTotalSO2MgL?: number;
+  activeYeastStrainId?: string; activeYeastStrainNameFa?: string;
   stageBreakdown: Array<{ id: string; stageTitle: string; amountGrams: number; referenceVolumeL: number; contributedMgL: number; formulaText: string; isDemo?: boolean }>;
 }
 export const enologyDb: {
   hydrateFromIndexedDBIfNeeded(): Promise<boolean>;
   getStorageDiagnostics(): { lastStorageError: string | null; corruptedKeysRecovered: string[] };
+  getEquipmentProfile(): CellarEquipmentProfile;
+  isEquipmentOnboardingCompleted(): boolean;
+  saveEquipmentProfile(partialOrFull: Partial<Omit<CellarEquipmentProfile, 'reagents'>> & { reagents?: Partial<CellarEquipmentProfile['reagents']> }): CellarEquipmentProfile;
+  applyEquipmentPreset(presetId: Exclude<EquipmentPresetId, 'custom'>): CellarEquipmentProfile;
+  getSelectedYeastIdForTank(tankId: TankId, batchId?: string): string;
+  setSelectedYeastForTank(tankId: TankId, strainId: string, batchId?: string): void;
   getBatches(): WineBatch[];
   getBatchById(id: string): WineBatch | undefined;
   addBatch(batch: Omit<WineBatch, 'id'>): WineBatch;
@@ -170,7 +178,7 @@ export type MilestoneTriggerType = 'sg' | 'day' | 'event';
 export interface MilestoneTankRow {
   tankId: TankId; tankLabelFa: string;
   doseValue: string; doseUnit: string; compoundFa: string; volumeContextFa: string;
-  doseAmountTextFa: string; isCompletedForTank: boolean;
+  doseAmountTextFa: string; stockSyringeHintFa?: string; isCompletedForTank: boolean;
   additionsToRecord: Array<Omit<ChemicalAddition, 'id'>>;
 }
 export interface RightNowMilestone {
@@ -179,6 +187,7 @@ export interface RightNowMilestone {
   triggerSG?: number; windowCloseSG?: number; triggerDay?: number; windowCloseDay?: number;
   state: MilestoneState; stateBadgeFa: string; closedReasonFa?: string; canMarkDone: boolean;
   estimatedHoursUntilDue?: { min: number; max: number }; skippedReasonFa?: string; snoozedUntilMs?: number;
+  equipmentAdaptationNoteFa?: string; reagentSubstitutionWarningFa?: string;
   tankRows: MilestoneTankRow[];
 }
 export interface SgAnomalyAlert {
@@ -206,11 +215,18 @@ export interface BottlingReadinessResult {
   overrideAudit?: { overriddenAtMs: number; reason: string; overriddenBlockerIds: string[]; tankId: TankId; batchId?: string };
   so2AgeHours?: number;
 }
+export type RightNowEquipmentProfileInput = Omit<Partial<EquipmentProfileInput>, 'densityInstrument' | 'availableReagents'> & {
+  densityInstrument?: EquipmentProfileInput['densityInstrument'] | 'none';
+  so2MeasurementMethod?: 'ripper_kit' | 'test_strips' | 'stock_calculation_only';
+  hasRipperKit?: boolean;
+  availableReagents?: Partial<EquipmentProfileInput['reagents']> & Record<string, boolean | undefined>;
+};
 export function evaluateRightNowQueue(options: {
   logs: FermentationLogEntry[]; additions: ChemicalAddition[]; activeTankId?: TankId;
   completedRoadmapStepIds?: number[]; snoozedUntilMsByStepId?: Record<string, number>;
   skippedReasonsByStepId?: Record<string, string>; nowMs?: number; plan?: DynamicProtocolPlan;
-  batch?: WineBatch; batchId?: string; excludeDemo?: boolean;
+  batch?: WineBatch; batchId?: string; excludeDemo?: boolean; equipmentProfile?: RightNowEquipmentProfileInput;
+  selectedYeastByTank?: Partial<Record<TankId, string>>;
 }): RightNowQueueResult;
 export function evaluateDeadlineCountdowns(options: {
   logs: FermentationLogEntry[]; additions: ChemicalAddition[]; labAnalyses?: LabAnalysisRecord[];
@@ -220,7 +236,7 @@ export function evaluateBottlingReadinessGate(options: {
   logs: FermentationLogEntry[]; additions: ChemicalAddition[]; labAnalyses: LabAnalysisRecord[];
   batch?: WineBatch; batchId?: string; excludeDemo?: boolean; tankId?: TankId; requireRsLabConfirmation?: boolean;
   manualConfirmations?: { clarityConfirmed?: boolean; coldStabConfirmedOrSkipped?: boolean; warmTestPassed?: boolean; sanitationConfirmed?: boolean; malicRiskAccepted?: boolean; clinitestPassed?: boolean; rsConfirmed?: boolean };
-  riskOverrideReason?: string; nowMs?: number;
+  riskOverrideReason?: string; nowMs?: number; equipmentProfile?: RightNowEquipmentProfileInput;
 }): BottlingReadinessResult;
 ```
 
@@ -240,13 +256,95 @@ export interface EnologyGlossaryItem {
 }
 export const ENOLOGY_GLOSSARY_DICTIONARY: Record<string, EnologyGlossaryItem>;
 export function getGlossaryItem(key: string): EnologyGlossaryItem | undefined;
-export function resolveEffectiveTankSelection(selection: GlobalTankSelection, tankCount?: 1 | 2): GlobalTankSelection;
+export function resolveEffectiveTankSelection(selection: GlobalTankSelection, tankCount?: 1 | 2, produceRoseSaignee?: boolean): GlobalTankSelection;
 export function resolvePrimaryTankId(selection: GlobalTankSelection, tankCount?: 1 | 2): TankId;
 export function resolveTargetTankIds(selection: GlobalTankSelection, tankCount?: 1 | 2): TankId[];
-export function getAvailableTankSelections(tankCount?: 1 | 2, targetStyle?: WineBatch['targetStyle']): TankSelectionOption[];
+export function getAvailableTankSelections(tankCount?: 1 | 2, targetStyle?: WineBatch['targetStyle'], produceRoseSaignee?: boolean): TankSelectionOption[];
 export function getTankSelectionLabelFa(selection: GlobalTankSelection, tankCount?: 1 | 2): string;
+export interface EnologyUiContextValue {
+  equipmentProfile: CellarEquipmentProfile;
+  equipmentCapabilities: EquipmentCapabilitiesSummary;
+  isEquipmentOnboardingCompleted: boolean;
+  isEquipmentModalOpen: boolean;
+  openEquipmentModal: () => void;
+  closeEquipmentModal: () => void;
+  saveEquipmentProfile: (profile: Partial<CellarEquipmentProfile> & Partial<EquipmentProfileInput>, markCompleted?: boolean) => void;
+  applyEquipmentPreset: (presetId: Exclude<EquipmentPresetId, 'custom'>, markCompleted?: boolean) => void;
+  selectedYeastByTank: Record<TankId, string>;
+  activeTankYeastStrain: YeastStrainProfile;
+  getYeastStrainForTank: (tankId: TankId) => YeastStrainProfile;
+  setSelectedYeastForTank: (tankOrSelection: GlobalTankSelection, strainId: string) => void;
+  isYeastSelectorOpen: boolean;
+  openYeastSelectorModal: () => void;
+  closeYeastSelectorModal: () => void;
+  // ...plus batch, tank selection, 5-tab nav, deep-links, modals, glossary, and dataVersion fields
+}
 export const EnologyUiProvider: React.FC<{ children: React.ReactNode }>;
 export function useEnologyUi(): EnologyUiContextValue;
 export const GlossaryTerm: React.FC<{ termKey: string; labelOverride?: string; className?: string }>;
 ```
+
+## 8. `src/utils/equipmentAdapterEngine.ts`
+```ts
+export interface EquipmentCapabilitiesSummary {
+  presetTitleFa: string;
+  shortBadgeFa: string;
+  defaultHydrometerCalibrationTemp: 20 | 15.5;
+  primarySugarInputMode: 'hydrometer_sg' | 'refractometer_brix' | 'sensory_timeline';
+  effectiveTankCount: 1 | 2;
+  produceRoseSaignee: boolean;
+  agingCarboyUnitL: 20 | 10 | 50;
+  redCarboysPerTankCount: number;
+  totalRedCarboysCount: number;
+  canMeasureFreeSo2Directly: boolean;
+  canMeasureTaDirectly: boolean;
+  canMeasurePhDirectly: boolean;
+  missingReagentsListFa: string[];
+  activeSubstitutionsCount: number;
+}
+export interface EquipmentAdaptedDosePlan {
+  executionMode: 'stock_syringe' | 'direct_weigh';
+  primaryDoseTextFa: string;
+  instructionFa: string;
+  stockPlan: ReturnType<typeof calculateStockSolutionPlan>;
+}
+export interface MilestoneEquipmentAdaptation {
+  isApplicable: boolean;
+  equipmentBadgeFa: string;
+  adaptedHowToFa: string;
+  substitutionWarningFa?: string;
+}
+export function evaluateEquipmentCapabilities(profile: EquipmentProfileInput, postRackRedVolumePerTankL?: number): EquipmentCapabilitiesSummary;
+export function formatDoseForEquipment(params: { targetDoseGrams: number; compoundNameFa: string; compoundCategory?: StockCompoundCategory; profile: EquipmentProfileInput }): EquipmentAdaptedDosePlan;
+export function getMilestoneEquipmentAdaptation(milestoneId: string, profile: EquipmentProfileInput): MilestoneEquipmentAdaptation;
+export function getRoadmapStepEquipmentGuide(stepNumber: number, profile: EquipmentProfileInput): { badgeFa: string; instructionFa: string; warningFa?: string } | null;
+export function getLabToolEquipmentCompatibility(testId: string, profile: EquipmentProfileInput): { isDirectlySupported: boolean; badgeFa: string; fallbackGuidanceFa: string };
+```
+
+## 9. `src/data/yeastStrainsData.ts`
+```ts
+export type YeastBrand = 'Lallemand' | 'Laffort' | 'Fermentis' | 'Enartis' | 'Anchor' | 'Maurivin' | 'Red Star' | 'Renaissance' | 'Chr. Hansen';
+export type YeastCategory = 'structured_red' | 'silky_premium_red' | 'fruity_red_rose' | 'aromatic_rose_white' | 'high_abv_restart' | 'heritage_classic' | 'biotech_zero_h2s_bioacid';
+export type YeastYanDemand = 'low' | 'medium' | 'high';
+export type YeastH2sRisk = 'zero_biotech' | 'very_low' | 'low' | 'medium' | 'high';
+export type YeastKillerFactor = 'k2_positive' | 'neutral' | 'sensitive' | 'non_sacch';
+export interface YeastStrainProfile {
+  id: string; code: string; nameEn: string; nameFa: string; brand: YeastBrand; species: string; category: YeastCategory;
+  recommendedStyles: Array<'red' | 'rose' | 'restart'>; originFa: string;
+  tempMinC: number; tempOptMinC: number; tempOptMaxC: number; tempWarningC: number; tempDangerC: number; tempMaxC: number;
+  alcoholTolerancePct: number; recommendedDoseGL: number; rehydrationTempC: number;
+  yanDemandLevel: YeastYanDemand; yanMultiplier: number; requiresHighSterolsGoFerm: boolean;
+  h2sRiskLevel: YeastH2sRisk; endogenousSo2MgL: number; so2BindingLevel: 'very_low' | 'low' | 'medium';
+  malicConsumptionPct: number; lacticAcidProductionGL: number; expectedPhShift: number;
+  glycerolYieldGL: number; polysaccharideRelease: 'low' | 'medium' | 'high' | 'extreme_hsp12'; killerFactor: YeastKillerFactor;
+  aromaProfileFa: string; sardashtFitScore: number; sardashtEngineeringNoteFa: string;
+}
+export const YEAST_STRAINS_DATABASE: ReadonlyArray<YeastStrainProfile>;
+export function getYeastStrainById(strainId?: string, isRose?: boolean): YeastStrainProfile;
+export function computeYeastAdjustedSnaPlan(params: { strainId?: string; isRose?: boolean; volumeL: number; brix: number; initialSG: number; naturalYAN?: number }): YeastAdjustedSnaPlan;
+export function computeYeastAcidityAndGlycerolImpact(params: { strainId?: string; isRose?: boolean; initialPH: number; initialTA: number; defaultMaxGlycerinGL: number }): YeastAcidityAndGlycerolImpact;
+export function recommendYeastStrainsForGoal(goal: 'classic_sardasht_red' | 'velvety_reserve_red' | 'natural_acidity_boost' | 'zero_h2s_safety' | 'aromatic_saignee_rose' | 'stuck_fermentation_rescue'): YeastStrainProfile[];
+```
+
+
 

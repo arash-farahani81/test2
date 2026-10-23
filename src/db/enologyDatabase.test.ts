@@ -676,3 +676,88 @@ test('Micro-Task 2 Audit Fixes: BUG-05 (576 mg/g KMS), BUG-12 (protocol snapshot
 
   enologyDb.resetToFactoryDefaults();
 });
+
+test('EnologyDatabaseService: CellarEquipmentProfile defaults, presets, partial save, and backup round-trip', () => {
+  enologyDb.resetToFactoryDefaults();
+
+  // 1. Default profile is full_sardasht_pro with onboardingCompleted: false
+  const initial = enologyDb.getEquipmentProfile();
+  assert.equal(initial.presetId, 'full_sardasht_pro');
+  assert.equal(initial.onboardingCompleted, false);
+  assert.equal(enologyDb.isEquipmentOnboardingCompleted(), false);
+  assert.equal(initial.primaryTankCount, 2);
+  assert.equal(initial.producesRoseSaignee, true);
+  assert.equal(initial.so2Instrument, 'ripper_iodine');
+
+  // 2. Apply standard_artisan_home preset
+  const artisan = enologyDb.applyEquipmentPreset('standard_artisan_home');
+  assert.equal(artisan.presetId, 'standard_artisan_home');
+  assert.equal(artisan.onboardingCompleted, true);
+  assert.equal(enologyDb.isEquipmentOnboardingCompleted(), true);
+  assert.equal(artisan.so2Instrument, 'none');
+  assert.equal(artisan.producesRoseSaignee, false);
+  assert.equal(artisan.primaryTankCount, 1);
+  assert.equal(artisan.reagents.hasCopperSulfate, false);
+
+  // 3. Apply minimal_plus_kit preset
+  const minimal = enologyDb.applyEquipmentPreset('minimal_plus_kit');
+  assert.equal(minimal.presetId, 'minimal_plus_kit');
+  assert.equal(minimal.phInstrument, 'strips_or_pocket');
+  assert.equal(minimal.pressingMethod, 'nylon_straining_bag_manual');
+  assert.equal(minimal.hasPrecisionScale001g, false);
+  assert.equal(minimal.reagents.hasBactilessOrLysozyme, false);
+
+  // 4. Partial save merges top-level fields and nested reagents cleanly
+  const custom = enologyDb.saveEquipmentProfile({
+    presetId: 'custom',
+    so2Instrument: 'aeration_oxidation',
+    reagents: { hasCopperSulfate: true }
+  });
+  assert.equal(custom.presetId, 'custom');
+  assert.equal(custom.so2Instrument, 'aeration_oxidation');
+  assert.equal(custom.phInstrument, 'strips_or_pocket');
+  assert.equal(custom.reagents.hasCopperSulfate, true);
+  assert.equal(custom.reagents.hasBactilessOrLysozyme, false);
+
+  // 5. Export JSON includes equipmentProfile and Import JSON ('replace') restores it
+  const exportedJson = enologyDb.exportDatabaseJSON();
+  const parsedExport = JSON.parse(exportedJson) as { equipmentProfile?: { presetId?: string } };
+  assert.equal(parsedExport.equipmentProfile?.presetId, 'custom');
+
+  enologyDb.resetToFactoryDefaults();
+  assert.equal(enologyDb.getEquipmentProfile().presetId, 'full_sardasht_pro');
+
+  const importRes = enologyDb.importDatabaseJSON(exportedJson, 'replace');
+  assert.equal(importRes.success, true);
+  const restored = enologyDb.getEquipmentProfile();
+  assert.equal(restored.presetId, 'custom');
+  assert.equal(restored.so2Instrument, 'aeration_oxidation');
+  assert.equal(restored.reagents.hasCopperSulfate, true);
+
+  enologyDb.resetToFactoryDefaults();
+});
+
+test('EnologyDatabaseService: per-tank yeast selection and strain-specific endogenous SO2 in CumulativeSO2Ledger', () => {
+  enologyDb.resetToFactoryDefaults();
+
+  // 1. Default selections: tank-a -> lalvin-rc-212, tank-rose -> lalvin-rhone-4600
+  assert.equal(enologyDb.getSelectedYeastIdForTank('tank-a'), 'lalvin-rc-212');
+  assert.equal(enologyDb.getSelectedYeastIdForTank('tank-b'), 'lalvin-rc-212');
+  assert.equal(enologyDb.getSelectedYeastIdForTank('tank-rose'), 'lalvin-rhone-4600');
+
+  const defaultLedger = enologyDb.getCumulativeSO2Ledger('tank-a');
+  assert.equal(defaultLedger.endogenousYeastMgL, 15);
+  assert.equal(defaultLedger.activeYeastStrainId, 'lalvin-rc-212');
+
+  // 2. Setting Zymaflore XPURE on tank-a updates endogenousYeastMgL to 4 mg/L
+  enologyDb.setSelectedYeastForTank('tank-a', 'laffort-zymaflore-xpure');
+  assert.equal(enologyDb.getSelectedYeastIdForTank('tank-a'), 'laffort-zymaflore-xpure');
+
+  const xpureLedger = enologyDb.getCumulativeSO2Ledger('tank-a');
+  assert.equal(xpureLedger.endogenousYeastMgL, 4);
+  assert.equal(xpureLedger.activeYeastStrainId, 'laffort-zymaflore-xpure');
+
+  enologyDb.resetToFactoryDefaults();
+});
+
+

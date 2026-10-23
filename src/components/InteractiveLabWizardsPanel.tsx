@@ -21,6 +21,7 @@ import {
   getContinuousTargetFreeSO2ByPH
 } from '../utils/enologyUtils.ts';
 import { useEnologyUi } from '../context/EnologyUiContext.tsx';
+import { getLabToolEquipmentCompatibility } from '../utils/equipmentAdapterEngine.ts';
 import { getCurrentPersianDateTimeStr } from '../utils/persianDate.ts';
 
 export interface InteractiveLabWizardsPanelProps {
@@ -62,8 +63,14 @@ function formatFaDate(): string {
 export const InteractiveLabWizardsPanel: React.FC<
   InteractiveLabWizardsPanelProps
 > = ({ onAnalysisSaved, selectedWizardOverride }) => {
-  const { activeBatch, effectiveSingleTankId, tankCount, notifyDataChanged } =
-    useEnologyUi();
+  const {
+    activeBatch,
+    effectiveSingleTankId,
+    tankCount,
+    notifyDataChanged,
+    equipmentProfile,
+    equipmentCapabilities
+  } = useEnologyUi();
 
   const [activeWizard, setActiveWizard] = useState<LabWizardId>(
     selectedWizardOverride ?? 'ripper_so2'
@@ -110,9 +117,15 @@ export const InteractiveLabWizardsPanel: React.FC<
   >('depleted');
 
   // Hydrometer Wizard State
-  const [hydroCalTemp, setHydroCalTemp] = useState<20 | 15.5>(20);
+  const [hydroCalTemp, setHydroCalTemp] = useState<20 | 15.5>(
+    equipmentCapabilities.defaultHydrometerCalibrationTemp
+  );
   const [hydroMeasuredSG, setHydroMeasuredSG] = useState<number>(1.083);
   const [hydroSampleTempC, setHydroSampleTempC] = useState<number>(24.0);
+
+  useEffect(() => {
+    setHydroCalTemp(equipmentCapabilities.defaultHydrometerCalibrationTemp);
+  }, [equipmentCapabilities.defaultHydrometerCalibrationTemp]);
 
   // 15-Second Endpoint Color-Stability Timer for Ripper Step 4
   useEffect(() => {
@@ -131,6 +144,10 @@ export const InteractiveLabWizardsPanel: React.FC<
 
   const currentWizardMeta =
     WIZARD_TABS.find((w) => w.id === activeWizard) ?? WIZARD_TABS[0];
+  const activeWizardCompat = useMemo(
+    () => getLabToolEquipmentCompatibility(activeWizard, equipmentProfile),
+    [activeWizard, equipmentProfile]
+  );
   const isRose = tankId === 'tank-rose';
 
   const handleSelectWizard = (id: LabWizardId) => {
@@ -335,21 +352,65 @@ export const InteractiveLabWizardsPanel: React.FC<
 
       {/* Wizard Selector Tabs */}
       <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
-        {WIZARD_TABS.map((w) => (
-          <button
-            key={w.id}
-            type="button"
-            onClick={() => handleSelectWizard(w.id)}
-            className={`px-3 py-2 rounded-xl text-xs font-bold whitespace-nowrap border cursor-pointer transition-all ${
-              activeWizard === w.id
-                ? 'bg-wine text-white border-wine shadow-xs'
-                : 'bg-paper text-ink border-line hover:bg-stone-200/60'
-            }`}
-          >
-            {w.labelFa}
-          </button>
-        ))}
+        {WIZARD_TABS.map((w) => {
+          const wCompat = getLabToolEquipmentCompatibility(w.id, equipmentProfile);
+          const isActive = activeWizard === w.id;
+          return (
+            <button
+              key={w.id}
+              type="button"
+              onClick={() => handleSelectWizard(w.id)}
+              className={`px-3 py-2 rounded-xl text-xs font-bold whitespace-nowrap border cursor-pointer transition-all inline-flex items-center gap-1.5 ${
+                isActive
+                  ? 'bg-wine text-white border-wine shadow-xs'
+                  : 'bg-paper text-ink border-line hover:bg-stone-200/60'
+              }`}
+            >
+              <span>{w.labelFa}</span>
+              <span
+                className={`font-mono px-1.5 py-0.5 rounded text-xs inline-flex items-center ${
+                  isActive
+                    ? 'bg-white/20 text-white'
+                    : wCompat.isDirectlySupported
+                      ? 'bg-emerald-500/15 text-ok'
+                      : 'bg-amber-500/15 text-warn'
+                }`}
+                title={wCompat.badgeFa}
+              >
+                {wCompat.isDirectlySupported ? (
+                  <CheckCircle2 className="w-3 h-3" />
+                ) : (
+                  '!'
+                )}
+              </span>
+            </button>
+          );
+        })}
       </div>
+
+      {!activeWizardCompat.isDirectlySupported && (
+        <div
+          data-testid="wizard-equipment-fallback-banner"
+          className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 mb-3 text-xs text-ink"
+        >
+          <span className="font-bold">
+            راهنمای جایگزین ویژه کارگاه شما ({activeWizardCompat.badgeFa}):{' '}
+          </span>
+          <span>{activeWizardCompat.fallbackGuidanceFa}</span>
+        </div>
+      )}
+
+      {activeWizard === 'ph_meter' &&
+        (String(
+          (equipmentProfile as unknown as Record<string, unknown>)?.phInstrument ?? ''
+        ) === 'ph_strips' ||
+          String(
+            (equipmentProfile as unknown as Record<string, unknown>)?.phMeasurementMethod ?? ''
+          ).includes('strip')) && (
+          <div className="rounded-xl border border-line bg-paper p-2.5 mb-3 text-xs text-ink">
+            حالت نوار کاغذی دقیق pH فعال است: نیازی به کالیبراسیون بافر الکترود نیست؛ یک قطره از نمونه زلال را روی نوار بچکانید و عدد خوانده‌شده را در گام آخر ثبت کنید.
+          </div>
+        )}
 
       {/* Step Progress Header */}
       <div className="flex items-center justify-between bg-paper border border-line rounded-xl px-3.5 py-2 text-xs">

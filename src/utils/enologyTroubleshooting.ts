@@ -11,8 +11,16 @@ import {
   getContinuousTargetFreeSO2ByPH,
   calculateH2O2SulfiteRemoval,
   calculateStagedH2O2Plan,
-  calculateRefractometerCorrection
+  calculateRefractometerCorrection,
+  type StockCompoundCategory
 } from './enologyUtils.ts';
+import type { CellarEquipmentProfile } from '../types/index.ts';
+import {
+  evaluateEquipmentCapabilities,
+  formatDoseForEquipment,
+  type EquipmentProfileInput
+} from './equipmentAdapterEngine.ts';
+import { getYeastStrainById } from '../data/yeastStrainsData.ts';
 
 export interface ScenarioInput {
   batchVolumeL: number;
@@ -26,6 +34,8 @@ export interface ScenarioInput {
   isRose?: boolean;
   isUnpressedMash?: boolean; // If true on red must with skins, applies 0.80 liquid-phase yield factor for water-soluble dosing
   isUnpressedRedMust?: boolean; // Alias for isUnpressedMash
+  equipmentProfile?: CellarEquipmentProfile | EquipmentProfileInput;
+  yeastStrainId?: string;
   issues?: {
     isStuckFermentation?: boolean;
     hasH2S?: boolean;
@@ -547,6 +557,26 @@ export function evaluateEnologicalScenario(input: ScenarioInput): EnologyEvaluat
   } else {
     // Stage 1: Active Red Maceration (!isRose && currentSG > 1.008)
     // Peak extraction 20.0–29.0 °C, Max Allowed Ceiling 30.0 °C, Crisis at >= 32.0 °C
+    const equip = input.equipmentProfile as
+      | (Partial<CellarEquipmentProfile> &
+          Partial<EquipmentProfileInput> &
+          Record<string, unknown>)
+      | undefined;
+    const coolingVal = String(
+      equip?.coolingSystem ?? equip?.coolingMethod ?? ''
+    );
+    const inertVal = String(equip?.inertGasSystem ?? '');
+    const dryIceSuffix =
+      equip && inertVal !== 'dry_ice_only' && inertVal !== 'dry_ice'
+        ? ' (طبق پروفایل شما: اولویت اصلی با بطریهای یخ ۱.۵ لیتری استریل است)'
+        : '';
+    const glycolStep =
+      coolingVal === 'glycol_chiller' || coolingVal === 'jacketed_glycol'
+        ? [
+            'تجهیزات کارگاه شما (چیلر گلیکول): دمای مدار ژاکت/کویل خنککننده را روی ۱۲ تا ۱۴ درجه تنظیم کرده و هر ۳۰ دقیقه پیژاژ ملایم برای شکستن لایه مرزی حرارتی انجام دهید.'
+          ]
+        : [];
+
     if (input.tempCapC >= 32.0) {
       const tempDiff = Math.round((input.tempCapC - 28.5) * 10) / 10;
       const iceBottlesNeeded = Math.max(4, Math.ceil((tempDiff * vol) / 100));
@@ -568,13 +598,14 @@ export function evaluateEnologicalScenario(input: ScenarioInput): EnologyEvaluat
             item: 'یخ خشک در صورت نیاز فوری',
             amount: `${calculateCoolingDryIceKg(vol, input.tempCapC, 26.5, input.currentSG || 1.080)}`,
             unit: 'کیلوگرم',
-            instruction: 'با احتساب چگالی شیره (SG) و راندمان انتقال حرارت ۶۵٪ تصعید گاز CO2 (در کاسه استیل شناور)'
+            instruction: `با احتساب چگالی شیره (SG) و راندمان انتقال حرارت ۶۵٪ تصعید گاز CO2 (در کاسه استیل شناور)${dryIceSuffix}`
           }
         ],
         steps: [
           `بلافاصله ${iceBottlesNeeded} عدد بطری ۱.۵ لیتری یخ‌زده که برچسب آن‌ها جدا و با محلول سولفیت اسیدی (بطری شماره ۳) ضدعفونی شده‌اند را زیر کلاهک قرار دهید.`,
           'پس از ۲۰ دقیقه، Pigeage عمیق انجام دهید تا لایه داغ مرکز کلاهک با مایع خنک زیرین همگن شود.',
-          'در صورت استفاده از یخ خشک، قطعات را داخل یک کاسه استیل ضدزنگ شناور قرار دهید و تهویه کف‌کش کارگاه را با حداکثر دور روشن کنید.'
+          'در صورت استفاده از یخ خشک، قطعات را داخل یک کاسه استیل ضدزنگ شناور قرار دهید و تهویه کف‌کش کارگاه را با حداکثر دور روشن کنید.',
+          ...glycolStep
         ]
       });
     } else if (input.tempCapC > 30.0) {
@@ -598,13 +629,14 @@ export function evaluateEnologicalScenario(input: ScenarioInput): EnologyEvaluat
             item: 'یخ خشک در صورت نیاز فوری',
             amount: `${calculateCoolingDryIceKg(vol, input.tempCapC, 26.5, input.currentSG || 1.080)}`,
             unit: 'کیلوگرم',
-            instruction: 'با احتساب چگالی شیره (SG) و راندمان انتقال حرارت ۶۵٪ تصعید گاز CO2'
+            instruction: `با احتساب چگالی شیره (SG) و راندمان انتقال حرارت ۶۵٪ تصعید گاز CO2${dryIceSuffix}`
           }
         ],
         steps: [
           `بلافاصله ${iceBottlesNeeded} عدد بطری ۱.۵ لیتری یخ ضدعفونی‌شده با محلول استوک شماره ۳ را در عمق ۱۵ سانتی‌متری زیر کلاهک قرار دهید.`,
           '۲۰ دقیقه صبر کرده و سپس کلاهک را غوطه‌ور (Pigeage) کنید تا دما به بازه ایمن ۲۶ تا ۲۸ درجه برگردد.',
-          'دمای محیط کارگاه را روی ۱۸–۲۰ درجه تنظیم نمایید.'
+          'دمای محیط کارگاه را روی ۱۸–۲۰ درجه تنظیم نمایید.',
+          ...glycolStep
         ]
       });
     } else if (input.tempCapC > 29.0) {
@@ -651,6 +683,22 @@ export function evaluateEnologicalScenario(input: ScenarioInput): EnologyEvaluat
   // 3. SG & BRIX & FERMENTATION SPEED
   // ----------------------------------------------------
   if (input.issues?.isStuckFermentation) {
+    const equip = input.equipmentProfile as
+      | (Partial<CellarEquipmentProfile> &
+          Partial<EquipmentProfileInput> &
+          Record<string, unknown>)
+      | undefined;
+    const caps = equip
+      ? evaluateEquipmentCapabilities(equip as EquipmentProfileInput)
+      : null;
+    const availReagents = (equip?.availableReagents ?? equip?.reagents) as
+      | Record<string, boolean | undefined>
+      | undefined;
+    const hasFermaidO = equip
+      ? availReagents?.hasFermaidO !== false &&
+        availReagents?.fermaidO !== false &&
+        !caps?.missingReagentsListFa.some((m) => m.includes('Fermaid O'))
+      : true;
     score -= 40;
     actions.push({
       title: 'بحرانی: توقف تخمیر (Stuck Fermentation - بحران ۴)',
@@ -681,7 +729,12 @@ export function evaluateEnologicalScenario(input: ScenarioInput): EnologyEvaluat
       steps: [
         'گام اول (احیای حرارتی): دمای شراب را به ۲۲–۲۳ درجه برسانید و دُرد نرم کف ظرف را با میله استیل ضدعفونی‌شده به آرامی معلق کنید.',
         'گام دوم (اگر ظرف ۴۸ ساعت راه نیفتاد): دوز Fermaid O را به مخزن اضافه کنید تا پوسته مخمر اسیدهای چرب بازدارنده را جذب کند.',
-        'در یک ظرف ۵ لیتری، Go-Ferm را در آب ۴۳ درجه حل کرده، در ۴۰ درجه مخمر EC-1118 را اضافه کنید و پس از ۲۰ دقیقه، هر ۲ ساعت حجم استارتر را با شراب مخزن دو برابر کنید (1.5L → 3L → 6L) و سپس به کل مخزن تزریق نمایید.'
+        'در یک ظرف ۵ لیتری، Go-Ferm را در آب ۴۳ درجه حل کرده، در ۴۰ درجه مخمر EC-1118 را اضافه کنید و پس از ۲۰ دقیقه، هر ۲ ساعت حجم استارتر را با شراب مخزن دو برابر کنید (1.5L → 3L → 6L) و سپس به کل مخزن تزریق نمایید.',
+        ...(equip && !hasFermaidO
+          ? [
+              'جایگزین عدم موجودی Fermaid O در کارگاه: ۰.۳۰ گرم بر لیتر مخمر نانوایی خالص را در کمی آب به مدت ۱۰ دقیقه بجوشانید (Yeast Hulls غیرفعال) تا اسیدهای چرب سمی مخزن جذب شوند.'
+            ]
+          : [])
       ]
     });
   } else if (input.currentBrix > 24.5 && (input.dayNumber === 0 || input.dayNumber === 1 || input.currentSG >= 1.095)) {
@@ -730,7 +783,35 @@ export function evaluateEnologicalScenario(input: ScenarioInput): EnologyEvaluat
   // ----------------------------------------------------
   // 4. OFF-ODORS, CAP MANAGEMENT & FINING ISSUES
   // ----------------------------------------------------
+  const selectedStrain = input.yeastStrainId
+    ? getYeastStrainById(input.yeastStrainId, isRose)
+    : null;
+
   if (input.issues?.hasH2S) {
+    const equip = input.equipmentProfile as
+      | (Partial<CellarEquipmentProfile> &
+          Partial<EquipmentProfileInput> &
+          Record<string, unknown>)
+      | undefined;
+    const caps = equip
+      ? evaluateEquipmentCapabilities(equip as EquipmentProfileInput)
+      : null;
+    const availReagents = (equip?.availableReagents ?? equip?.reagents) as
+      | Record<string, boolean | undefined>
+      | undefined;
+    const hasFermaidO = equip
+      ? availReagents?.hasFermaidO !== false &&
+        availReagents?.fermaidO !== false &&
+        !caps?.missingReagentsListFa.some((m) => m.includes('Fermaid O'))
+      : true;
+    const hasCopperSulfate = equip
+      ? availReagents?.hasCopperSulfate !== false &&
+        availReagents?.copperSulfate !== false &&
+        !caps?.missingReagentsListFa.some(
+          (m) => m.includes('سولفات مس') || m.includes('CuSO4')
+        )
+      : true;
+
     score -= 25;
     actions.push({
       title: 'تشخیص بوی گوگرد / تخم‌مرغ گندیده (H2S - بحران ۲)',
@@ -743,7 +824,11 @@ export function evaluateEnologicalScenario(input: ScenarioInput): EnologyEvaluat
           item: 'مکمل تغذیه‌ای ارگانیک Fermaid O',
           amount: `${Math.round(0.15 * effectiveLiquidVol * 10) / 10}`,
           unit: 'گرم',
-          instruction: 'حل‌شده در آب ولرم (در صورت عبور از SG 1.062 مصرف DAP مطلقاً ممنوع است!)'
+          instruction: `حل‌شده در آب ولرم (در صورت عبور از SG 1.062 مصرف DAP مطلقاً ممنوع است!)${
+            equip && !hasFermaidO
+              ? ' (جایگزین در صورت عدم موجودی Fermaid O: ۰.۳۰ g/L پوسته مخمر جوشاندهشده غیرفعال)'
+              : ''
+          }`
         },
         {
           item: 'محلول استوک ۰.۱٪ سولفات مس (بطری شماره ۲)',
@@ -756,12 +841,95 @@ export function evaluateEnologicalScenario(input: ScenarioInput): EnologyEvaluat
       steps: [
         'فوراً با پارچ استیل تمیز، ۲۰ بار مایع را از شیر پایین بردارید و از ارتفاع ۳۰ سانتی‌متری روی کلاهک بپاشید (Splash Aeration).',
         'اگر قبل از SG = 1.057 هستید نوبت SNA را تزریق کنید؛ اگر از 1.057 عبور کرده‌اید صرفاً از Fermaid O ارگانیک استفاده نمایید.',
-        'اگر بوی گوگرد تا پایان تخمیر باقی ماند، در روز دهم تست ۵ لیوانی مس و اسید اسکوربیک (SOP-TEST-08) را انجام دهید تا سولفید مس (CuS) رسوب کند و با Bactiless کیلیت شود.'
+        'اگر بوی گوگرد تا پایان تخمیر باقی ماند، در روز دهم تست ۵ لیوانی مس و اسید اسکوربیک (SOP-TEST-08) را انجام دهید تا سولفید مس (CuS) رسوب کند و با Bactiless کیلیت شود.',
+        ...(equip && !hasCopperSulfate
+          ? [
+              'پروتکل جایگزین بدون سولفات مس در کارگاه شما: اجرای ۲ نوبت هوادهی پاششی (Splash Racking) و سیفون فوری از روی دُرد درشت.'
+            ]
+          : []),
+        ...(selectedStrain?.h2sRiskLevel === 'zero_biotech'
+          ? [
+              'تشخیص ویژه سویه بدون H2S (' +
+                selectedStrain.nameEn +
+                '): چون این مخمر از نظر ژنتیکی قادر به نشت بیوشیمیایی H2S نیست، بوی گوگرد فعلی ناشی از احیای گوگرد عنصری سمپاشی باغ است؛ هوادهی پاششی و سیفون زودهنگام دُرد درشت اولویت دارد.'
+            ]
+          : [])
       ]
     });
   }
 
+  if (selectedStrain) {
+    if (selectedStrain.malicConsumptionPct <= -20 && input.ph >= 3.48) {
+      score -= 10;
+      actions.push({
+        title:
+          'هشدار مصرف اسید مالیک توسط مخمر ' +
+          selectedStrain.code +
+          ' و خطر افزایش pH',
+        category: 'pH_Acid',
+        severity: 'warning',
+        diagnosis:
+          'سویه ' +
+          selectedStrain.nameFa +
+          ' حدود ۲۰ تا ۴۰ درصد اسید مالیک را مصرف میکند و در شیره کماسید رشه باعث افزایش pH به میزان ~0.10 واحد میشود.',
+        solutionSummary:
+          'پایش دقیق pH و آمادگی برای اصلاح اسیدیته با اسید تارتاریک.',
+        steps: [
+          'پس از اتمام تخمیر، pH و TA را مجدداً اندازهگیری کرده و با اسید تارتاریک تنظیم نمایید.'
+        ]
+      });
+    }
+    if (selectedStrain.lacticAcidProductionGL > 0) {
+      actions.push({
+        title: 'اسیدیسازی بیولوژیکی فعال توسط ' + selectedStrain.code,
+        category: 'pH_Acid',
+        severity: 'normal',
+        alertTier: 'info',
+        diagnosis:
+          'این سویه تا ' +
+          selectedStrain.lacticAcidProductionGL +
+          ' گرم بر لیتر ال-اسید لاکتیک طبیعی تولید کرده و pH را حدود ' +
+          Math.abs(selectedStrain.expectedPhShift) +
+          ' واحد کاهش میدهد.',
+        solutionSummary:
+          'کاهش نیاز به افزودن اسید تارتاریک شیمیایی به دلیل تولید اسید لاکتیک طبیعی.',
+        steps: [
+          'پیش از افزودن اسید تارتاریک کامل، صبر کنید تا فاز اول تخمیر لاکتیک (۴۸ ساعت اول) کامل شود و سپس pH را بسنجید.'
+        ]
+      });
+    }
+  }
+
   if (input.issues?.hasVolatileAcidity) {
+    const equip = input.equipmentProfile as
+      | (Partial<CellarEquipmentProfile> &
+          Partial<EquipmentProfileInput> &
+          Record<string, unknown>)
+      | undefined;
+    const caps = equip
+      ? evaluateEquipmentCapabilities(equip as EquipmentProfileInput)
+      : null;
+    const availReagents = (equip?.availableReagents ?? equip?.reagents) as
+      | Record<string, boolean | undefined>
+      | undefined;
+    const hasBactiless = equip
+      ? availReagents?.hasBactilessChitosan !== false &&
+        availReagents?.bactiless !== false &&
+        availReagents?.chitosanBactiless !== false &&
+        availReagents?.bactilessChitosan !== false &&
+        !caps?.missingReagentsListFa.some(
+          (m) => m.includes('Bactiless') || m.includes('کیتوزان')
+        )
+      : true;
+    const inertVal = String(equip?.inertGasSystem ?? '');
+    const isNoInertGasMarbles = Boolean(
+      equip &&
+        (inertVal === 'none_topup_marbles' ||
+          inertVal === 'none_marbles_topup' ||
+          inertVal.includes('marbles') ||
+          inertVal === 'none')
+    );
+
     score -= 30;
     const vaTargetSO2 = getTargetFreeSO2ByPH(input.ph, isRose);
     actions.push({
@@ -787,7 +955,17 @@ export function evaluateEnologicalScenario(input: ScenarioInput): EnologyEvaluat
       steps: [
         'کلاهک شناور را فوراً مستغرق کرده و فضای بالای مخزن را با گاز CO2 یا آرگون پوشش دهید.',
         'در شراب پس از تخمیر، گالن‌ها را کاملاً لب‌به‌لب (Top-up) کرده و دما را به ۱۲–۱۴ درجه کاهش دهید.',
-        'با تزریق KMS و ۰.۳۰ گرم بر لیتر Bactiless، باکتری‌های استیک و مالولاکتیک را به طور کامل حذف نمایید.'
+        'با تزریق KMS و ۰.۳۰ گرم بر لیتر Bactiless، باکتری‌های استیک و مالولاکتیک را به طور کامل حذف نمایید.',
+        ...(isNoInertGasMarbles
+          ? [
+              'پروتکل بدون کپسول گاز CO2 (مطابق تجهیزات شما): گالنها را با شراب ذخیره یا تیلههای شیشهای ضدعفونیشده در محلول سولفیت اسیدی تا ۲ سانتیمتری زیر قفل هوا کاملاً لببهلب (Top-up ۱۰۰٪) کنید.'
+            ]
+          : []),
+        ...(equip && !hasBactiless
+          ? [
+              'جایگزین عدم موجودی کیتوزان (Bactiless) در کارگاه شما: قفل کردن سولفیت مولکولی روی ۰.۸۰ mg/L با KMS، سیفون کامل دُرد و نگهداری در دمای زیر ۱۲–۱۴ درجه.'
+            ]
+          : [])
       ]
     });
   }
@@ -993,6 +1171,36 @@ export function evaluateEnologicalScenario(input: ScenarioInput): EnologyEvaluat
             amount: '0',
             instruction: 'محاسبه متوقف شد — ابتدا حجم معتبر مخزن را وارد کنید'
           }))
+        : input.equipmentProfile && action.calculatedRecipe
+        ? action.calculatedRecipe.map((r) => {
+            const numericAmt = Number.parseFloat(r.amount);
+            if (
+              r.unit === 'گرم' &&
+              Number.isFinite(numericAmt) &&
+              numericAmt > 0
+            ) {
+              const cat: StockCompoundCategory = /kms|سولفیت/i.test(r.item)
+                ? 'kms'
+                : /تارتاریک/i.test(r.item)
+                ? 'tartaric'
+                : /مخمر|fermaid|go-ferm/i.test(r.item)
+                ? 'fermaid_or_yeast'
+                : 'general';
+              const dosePlan = formatDoseForEquipment({
+                targetDoseGrams: numericAmt,
+                compoundNameFa: r.item,
+                compoundCategory: cat,
+                profile: input.equipmentProfile!
+              });
+              if (dosePlan.executionMode === 'stock_syringe') {
+                return {
+                  ...r,
+                  instruction: `${r.instruction} [معادل سرنگ استوک: ${dosePlan.primaryDoseTextFa}]`
+                };
+              }
+            }
+            return r;
+          })
         : action.calculatedRecipe;
 
     const firstRecipe = sanitizedRecipes?.[0];

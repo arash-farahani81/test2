@@ -7,12 +7,18 @@ import {
   type EnologyDatabaseExport,
   type FermentationLogEntry,
   type TankId,
+  type CellarEquipmentProfile,
+  type EquipmentPresetId,
   WineBatchSchema,
   FermentationLogEntrySchema,
   ChemicalAdditionSchema,
   LabAnalysisRecordSchema,
   SavedCalculationSchema,
-  EnologyDatabaseExportSchema
+  CellarEquipmentProfileSchema,
+  EnologyDatabaseExportSchema,
+  DEFAULT_EQUIPMENT_PROFILE_PRO,
+  EQUIPMENT_PRESET_ARTISAN_HOME,
+  EQUIPMENT_PRESET_MINIMAL_PLUS
 } from '../types/index.ts';
 import { INITIAL_TRACKING_DATA } from '../data/seedTrackingData.ts';
 import {
@@ -20,12 +26,14 @@ import {
   onFlexibleProtocolSync,
   type FlexibleProtocolParams
 } from '../data/masterProtocolConfig.ts';
+import { getYeastStrainById } from '../data/yeastStrainsData.ts';
 
 const DB_STORAGE_KEY_BATCHES = 'enology_db_batches_v1';
 const DB_STORAGE_KEY_LOGS = 'enology_db_logs_v1';
 const DB_STORAGE_KEY_ADDITIONS = 'enology_db_additions_v1';
 const DB_STORAGE_KEY_ANALYSES = 'enology_db_lab_analyses_v1';
 const DB_STORAGE_KEY_CALCS = 'enology_db_saved_calculations_v1';
+const DB_STORAGE_KEY_EQUIPMENT = 'enology_db_equipment_profile_v1';
 const DB_STORAGE_KEY_BACKUP_META = 'enology_last_backup_meta_v1';
 
 export interface CumulativeSO2Ledger {
@@ -43,6 +51,8 @@ export interface CumulativeSO2Ledger {
   accountingBasisFa: string;
   estimatedBoundAndVolatilizedRatio: number;
   measuredTotalSO2MgL?: number;
+  activeYeastStrainId?: string;
+  activeYeastStrainNameFa?: string;
   stageBreakdown: Array<{
     id: string;
     stageTitle: string;
@@ -264,6 +274,10 @@ class EnologyDatabaseService {
   private additions: ChemicalAddition[] = [];
   private analyses: LabAnalysisRecord[] = [];
   private calculations: SavedCalculation[] = [];
+  private equipmentProfile: CellarEquipmentProfile = {
+    ...DEFAULT_EQUIPMENT_PROFILE_PRO,
+    reagents: { ...DEFAULT_EQUIPMENT_PROFILE_PRO.reagents }
+  };
   private isInitialized = false;
   private hasLocalMutations = false;
   private storageErrorsByKey: Record<string, string> = {};
@@ -595,6 +609,39 @@ class EnologyDatabaseService {
       this.calculations = [];
     }
 
+    // Load Cellar Equipment Profile with Zod Validation
+    const savedEquipment =
+      typeof localStorage !== 'undefined' ? localStorage.getItem(DB_STORAGE_KEY_EQUIPMENT) : null;
+    if (savedEquipment) {
+      try {
+        const parsedEq: unknown = JSON.parse(savedEquipment);
+        const eqResult = CellarEquipmentProfileSchema.safeParse(parsedEq);
+        if (eqResult.success) {
+          this.equipmentProfile = {
+            ...eqResult.data,
+            reagents: { ...eqResult.data.reagents }
+          };
+        } else {
+          this.preserveCorruptRawValue(DB_STORAGE_KEY_EQUIPMENT, savedEquipment);
+          this.equipmentProfile = {
+            ...DEFAULT_EQUIPMENT_PROFILE_PRO,
+            reagents: { ...DEFAULT_EQUIPMENT_PROFILE_PRO.reagents }
+          };
+        }
+      } catch {
+        this.preserveCorruptRawValue(DB_STORAGE_KEY_EQUIPMENT, savedEquipment);
+        this.equipmentProfile = {
+          ...DEFAULT_EQUIPMENT_PROFILE_PRO,
+          reagents: { ...DEFAULT_EQUIPMENT_PROFILE_PRO.reagents }
+        };
+      }
+    } else {
+      this.equipmentProfile = {
+        ...DEFAULT_EQUIPMENT_PROFILE_PRO,
+        reagents: { ...DEFAULT_EQUIPMENT_PROFILE_PRO.reagents }
+      };
+    }
+
     this.isInitialized = true;
     void this.hydrateFromIndexedDBIfNeeded();
   }
@@ -604,6 +651,118 @@ class EnologyDatabaseService {
       lastStorageError: this.lastStorageError,
       corruptedKeysRecovered: [...this.corruptedKeysRecovered]
     };
+  }
+
+  // --- Cellar Equipment Profile ---
+  private persistEquipmentProfile() {
+    this.handleStorageSetItem(DB_STORAGE_KEY_EQUIPMENT, JSON.stringify(this.equipmentProfile));
+    mirrorToIndexedDB(DB_STORAGE_KEY_EQUIPMENT, this.equipmentProfile);
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(
+        new CustomEvent('enology-equipment-profile-sync', {
+          detail: this.getEquipmentProfile()
+        })
+      );
+    }
+  }
+
+  public getEquipmentProfile(): CellarEquipmentProfile {
+    return {
+      ...this.equipmentProfile,
+      reagents: { ...this.equipmentProfile.reagents }
+    };
+  }
+
+  public isEquipmentOnboardingCompleted(): boolean {
+    return this.equipmentProfile.onboardingCompleted;
+  }
+
+  public saveEquipmentProfile(
+    partialOrFull: Partial<Omit<CellarEquipmentProfile, 'reagents'>> & {
+      reagents?: Partial<CellarEquipmentProfile['reagents']>;
+    }
+  ): CellarEquipmentProfile {
+    this.hasLocalMutations = true;
+    const mergedCandidate: CellarEquipmentProfile = {
+      ...this.equipmentProfile,
+      ...partialOrFull,
+      onboardingCompleted: partialOrFull.onboardingCompleted ?? true,
+      updatedAtMs: Date.now(),
+      reagents: {
+        ...this.equipmentProfile.reagents,
+        ...(partialOrFull.reagents ?? {})
+      }
+    };
+
+    const validated = CellarEquipmentProfileSchema.safeParse(mergedCandidate);
+    if (validated.success) {
+      this.equipmentProfile = {
+        ...validated.data,
+        reagents: { ...validated.data.reagents }
+      };
+      this.persistEquipmentProfile();
+      this.incrementChangesSinceBackup();
+    }
+    return this.getEquipmentProfile();
+  }
+
+  public applyEquipmentPreset(
+    presetId: Exclude<EquipmentPresetId, 'custom'>
+  ): CellarEquipmentProfile {
+    this.hasLocalMutations = true;
+    const basePreset =
+      presetId === 'standard_artisan_home'
+        ? EQUIPMENT_PRESET_ARTISAN_HOME
+        : presetId === 'minimal_plus_kit'
+          ? EQUIPMENT_PRESET_MINIMAL_PLUS
+          : DEFAULT_EQUIPMENT_PROFILE_PRO;
+
+    this.equipmentProfile = {
+      ...basePreset,
+      onboardingCompleted: true,
+      updatedAtMs: Date.now(),
+      reagents: { ...basePreset.reagents }
+    };
+    this.persistEquipmentProfile();
+    this.incrementChangesSinceBackup();
+    return this.getEquipmentProfile();
+  }
+
+  public getSelectedYeastIdForTank(tankId: TankId, batchId?: string): string {
+    const targetBatch = batchId
+      ? this.getBatchById(batchId)
+      : (this.batches.find((b) => !b.isDemo) ?? this.batches[0]);
+    return (
+      targetBatch?.selectedYeastByTank?.[tankId] ??
+      this.equipmentProfile.selectedYeastByTank?.[tankId] ??
+      (tankId === 'tank-rose' ? 'lalvin-rhone-4600' : 'lalvin-rc-212')
+    );
+  }
+
+  public setSelectedYeastForTank(tankId: TankId, strainId: string, batchId?: string): void {
+    this.hasLocalMutations = true;
+    this.equipmentProfile = {
+      ...this.equipmentProfile,
+      selectedYeastByTank: {
+        ...(this.equipmentProfile.selectedYeastByTank ?? {}),
+        [tankId]: strainId
+      },
+      updatedAtMs: Date.now()
+    };
+    this.persistEquipmentProfile();
+    this.incrementChangesSinceBackup();
+
+    const targetBatch = batchId
+      ? this.getBatchById(batchId)
+      : (this.batches.find((b) => !b.isDemo) ?? this.batches[0]);
+    if (targetBatch) {
+      this.updateBatch(targetBatch.id, {
+        selectedYeastByTank: {
+          ...(targetBatch.selectedYeastByTank ?? {}),
+          [tankId]: strainId
+        }
+      });
+    }
   }
 
   // --- Batches ---
@@ -1205,7 +1364,13 @@ class EnologyDatabaseService {
     const roundedAdded = Math.round(addedFromKmsMgL * 10) / 10;
     const roundedTotalKmsMassGrams = Math.round(totalKmsMassGrams * 100) / 100;
     const finalVolumeEquivalentMgL = Math.round(((totalKmsMassGrams * kmsMgPerGram) / effectiveVol) * 10) / 10;
-    const endogenousYeastMgL = MASTER_PROTOCOL_CONFIG.stoichiometry.yeastEndogenousSO2MgL;
+    const explicitStrainId =
+      (targetBatchId ? this.getBatchById(targetBatchId)?.selectedYeastByTank?.[tankId] : undefined) ??
+      this.equipmentProfile.selectedYeastByTank?.[tankId];
+    const resolvedStrain = getYeastStrainById(explicitStrainId, tankId === 'tank-rose');
+    const endogenousYeastMgL = explicitStrainId
+      ? resolvedStrain.endogenousSo2MgL
+      : MASTER_PROTOCOL_CONFIG.stoichiometry.yeastEndogenousSO2MgL;
     const estimatedTotalSO2MgL = Math.round((roundedAdded + endogenousYeastMgL) * 10) / 10;
     const legalCeilingMgL =
       tankId === 'tank-rose'
@@ -1234,6 +1399,8 @@ class EnologyDatabaseService {
         'حسابداری اسمی سولفیت افزودهشده (Nominal Added SO2 Accounting — متفاوت از Total SO2 آزمایشگاهی)',
       estimatedBoundAndVolatilizedRatio: 0.35,
       measuredTotalSO2MgL,
+      activeYeastStrainId: resolvedStrain.id,
+      activeYeastStrainNameFa: resolvedStrain.nameFa,
       stageBreakdown
     };
   }
@@ -1320,7 +1487,8 @@ class EnologyDatabaseService {
       chemicalAdditions: this.additions,
       labAnalyses: this.analyses,
       savedCalculations: this.calculations,
-      ...(flexibleProtocolParams ? { flexibleProtocolParams } : {})
+      ...(flexibleProtocolParams ? { flexibleProtocolParams } : {}),
+      equipmentProfile: this.getEquipmentProfile()
     };
     return JSON.stringify(exportData, null, 2);
   }
@@ -1503,6 +1671,16 @@ class EnologyDatabaseService {
             JSON.stringify(result.data.flexibleProtocolParams)
           );
         }
+        if (
+          result.data.equipmentProfile &&
+          result.data.equipmentProfile.updatedAtMs >= this.equipmentProfile.updatedAtMs
+        ) {
+          this.equipmentProfile = {
+            ...result.data.equipmentProfile,
+            reagents: { ...result.data.equipmentProfile.reagents }
+          };
+          this.persistEquipmentProfile();
+        }
         this.incrementChangesSinceBackup();
       } else {
         this.batches = result.data.batches;
@@ -1515,6 +1693,13 @@ class EnologyDatabaseService {
             'enology_flexible_protocol_params_v1',
             JSON.stringify(result.data.flexibleProtocolParams)
           );
+        }
+        if (result.data.equipmentProfile) {
+          this.equipmentProfile = {
+            ...result.data.equipmentProfile,
+            reagents: { ...result.data.equipmentProfile.reagents }
+          };
+          this.persistEquipmentProfile();
         }
       }
 
@@ -1547,12 +1732,17 @@ class EnologyDatabaseService {
     this.additions = [...DEFAULT_CHEMICAL_ADDITIONS];
     this.analyses = [...DEFAULT_LAB_ANALYSES];
     this.calculations = [];
+    this.equipmentProfile = {
+      ...DEFAULT_EQUIPMENT_PROFILE_PRO,
+      reagents: { ...DEFAULT_EQUIPMENT_PROFILE_PRO.reagents }
+    };
 
     this.persistBatches();
     this.persistLogs();
     this.persistAdditions();
     this.persistAnalyses();
     this.persistCalculations();
+    this.persistEquipmentProfile();
     this.incrementChangesSinceBackup();
   }
 }

@@ -1,6 +1,10 @@
 import React, { useMemo } from 'react';
 import { Activity, Check, Droplets, Thermometer } from 'lucide-react';
-import type { FermentationLogEntry, TankId } from '../types/index.ts';
+import type {
+  CellarEquipmentProfile,
+  FermentationLogEntry,
+  TankId
+} from '../types/index.ts';
 import { enologyDb } from '../db/enologyDatabase.ts';
 import {
   getEffectiveProtocolPlanForBatch,
@@ -14,6 +18,11 @@ import {
   sortFermentationLogs
 } from '../utils/trackingCalculations.ts';
 import { useEnologyUi } from '../context/EnologyUiContext.tsx';
+import {
+  evaluateEquipmentCapabilities,
+  type EquipmentProfileInput
+} from '../utils/equipmentAdapterEngine.ts';
+import { getYeastStrainById } from '../data/yeastStrainsData.ts';
 
 export interface VesselTwinState {
   tankId: TankId;
@@ -40,6 +49,13 @@ export interface VesselTwinState {
   sineWaveAmplitudePx: number;
   activityLabelFa: string;
   tempAlert: 'normal' | 'caution' | 'warning' | 'danger';
+  vesselHardwareBadgeFa: string;
+  headspaceProtectionBadgeFa: string;
+  isStainlessSteel: boolean;
+  yeastStrainCode: string;
+  yeastStrainNameFa: string;
+  yeastTempOptRangeFa: string;
+  yeastYanDemandFa: string;
 }
 
 export function computeVesselTwinState(params: {
@@ -47,10 +63,18 @@ export function computeVesselTwinState(params: {
   logs: FermentationLogEntry[];
   plan?: DynamicProtocolPlan;
   tankCount?: 1 | 2;
+  equipmentProfile?: CellarEquipmentProfile | EquipmentProfileInput;
+  yeastStrainId?: string;
 }): VesselTwinState {
   const isRose = params.tankId === 'tank-rose';
-  const tankCount = params.tankCount ?? 2;
-  const redTankMultiplier = !isRose && tankCount === 1 ? 2 : 1;
+  const strain = getYeastStrainById(params.yeastStrainId, isRose);
+  const rawEquip = params.equipmentProfile as Record<string, unknown> | undefined;
+  const caps = params.equipmentProfile
+    ? evaluateEquipmentCapabilities(params.equipmentProfile as EquipmentProfileInput)
+    : null;
+  const effectiveTankCount: 1 | 2 =
+    params.tankCount ?? caps?.effectiveTankCount ?? 2;
+  const redTankMultiplier = !isRose && effectiveTankCount === 1 ? 2 : 1;
   const plan = params.plan ?? getEffectiveProtocolPlanForBatch(null);
 
   const tankLogs = params.logs.filter(
@@ -205,11 +229,16 @@ export function computeVesselTwinState(params: {
   const sineWaveAmplitudePx =
     bubbleCount >= 8 ? 3.2 : bubbleCount > 0 ? 2.0 : 0;
 
-  const tempAlert = getCapTemperatureAlertLevel(tempCap, isRose, currentSG);
+  const tempAlert = getCapTemperatureAlertLevel(
+    tempCap,
+    isRose,
+    currentSG,
+    params.yeastStrainId ? strain.id : undefined
+  );
 
   const labelFa = isRose
     ? 'گالن رُزه (سانیه)'
-    : tankCount === 1
+    : effectiveTankCount === 1
     ? 'مخزن قرمز (یکپارچه)'
     : params.tankId === 'tank-a'
     ? 'مخزن قرمز A (اصلی)'
@@ -217,11 +246,51 @@ export function computeVesselTwinState(params: {
 
   const shortLabelFa = isRose
     ? 'گالن رُزه'
-    : tankCount === 1
+    : effectiveTankCount === 1
     ? 'مخزن قرمز'
     : params.tankId === 'tank-a'
     ? 'مخزن A'
     : 'مخزن B';
+
+  const redConfigStr = String(
+    rawEquip?.redTankConfiguration ?? rawEquip?.primaryFermenterType ?? ''
+  );
+  const agingTypeStr = String(
+    rawEquip?.agingVesselType ?? rawEquip?.secondaryVesselType ?? ''
+  );
+  const inertStr = String(rawEquip?.inertGasSystem ?? '');
+
+  const isStainlessSteel =
+    !isRose &&
+    (redConfigStr === 'stainless_variable' ||
+      (currentSG <= plan.triggers.pressingSG &&
+        agingTypeStr === 'stainless_keg'));
+
+  let vesselHardwareBadgeFa: string;
+  if (isRose) {
+    vesselHardwareBadgeFa = 'گالن شیشهای رُزه سانیه';
+  } else if (currentSG <= plan.triggers.pressingSG) {
+    const unitL = caps?.agingCarboyUnitL ?? 20;
+    const count = Math.max(1, Math.ceil(currentLiquidVolumeL / unitL));
+    vesselHardwareBadgeFa =
+      agingTypeStr === 'stainless_keg' || unitL === 50
+        ? `${count} کگ استیل ${unitL}L`
+        : `${count} گالن شیشهای ${unitL}L`;
+  } else {
+    vesselHardwareBadgeFa =
+      redConfigStr === 'stainless_variable'
+        ? 'مخزن استیل دربشناور'
+        : effectiveTankCount === 1
+        ? 'مخزن بزرگ یکپارچه'
+        : 'مخزن تخمیر دهانهگشاد';
+  }
+
+  const headspaceProtectionBadgeFa =
+    inertStr === 'co2_argon_cylinder' || inertStr.includes('cylinder')
+      ? 'پرج گاز CO2/آرگون'
+      : inertStr === 'dry_ice_only' || inertStr.includes('dry_ice')
+      ? 'پوشش یخ خشک'
+      : 'لببهلب (Top-up / تیله شیشهای)';
 
   return {
     tankId: params.tankId,
@@ -247,7 +316,19 @@ export function computeVesselTwinState(params: {
     airlockBubbleIntervalSec,
     sineWaveAmplitudePx,
     activityLabelFa,
-    tempAlert
+    tempAlert,
+    vesselHardwareBadgeFa,
+    headspaceProtectionBadgeFa,
+    isStainlessSteel,
+    yeastStrainCode: strain.code,
+    yeastStrainNameFa: strain.nameFa,
+    yeastTempOptRangeFa: `${strain.tempOptMinC}–${strain.tempOptMaxC}°C`,
+    yeastYanDemandFa:
+      strain.yanDemandLevel === 'low'
+        ? 'کمنیاز N'
+        : strain.yanDemandLevel === 'high'
+        ? 'پرنیاز N'
+        : 'متوسط N'
   };
 }
 
@@ -264,8 +345,12 @@ export const LivingTankVisualTwin: React.FC<{
     tankCount,
     globalTankSelection,
     setGlobalTankSelection,
-    dataVersion
+    dataVersion,
+    equipmentProfile,
+    equipmentCapabilities,
+    selectedYeastByTank
   } = useEnologyUi();
+  void equipmentCapabilities;
   const { plan } = useFlexibleProtocol();
 
   const effectivePlan = useMemo(
@@ -275,9 +360,17 @@ export const LivingTankVisualTwin: React.FC<{
 
   const vesselIds: TankId[] = useMemo(() => {
     if (activeBatch?.targetStyle === 'rose') return ['tank-rose'];
-    if (tankCount === 1) return ['tank-a', 'tank-rose'];
-    return ['tank-a', 'tank-b', 'tank-rose'];
-  }, [activeBatch?.targetStyle, tankCount]);
+    const base: TankId[] =
+      tankCount === 1 ? ['tank-a'] : ['tank-a', 'tank-b'];
+    if (equipmentCapabilities.produceRoseSaignee !== false) {
+      base.push('tank-rose');
+    }
+    return base;
+  }, [
+    activeBatch?.targetStyle,
+    tankCount,
+    equipmentCapabilities.produceRoseSaignee
+  ]);
 
   const vessels = useMemo(
     () =>
@@ -287,10 +380,20 @@ export const LivingTankVisualTwin: React.FC<{
           tankId: vId,
           logs: vLogs,
           plan: effectivePlan,
-          tankCount
+          tankCount,
+          equipmentProfile,
+          yeastStrainId: selectedYeastByTank[vId]
         });
       }),
-    [vesselIds, activeBatchId, effectivePlan, tankCount, dataVersion]
+    [
+      vesselIds,
+      activeBatchId,
+      effectivePlan,
+      tankCount,
+      dataVersion,
+      equipmentProfile,
+      selectedYeastByTank
+    ]
   );
 
   return (
@@ -609,6 +712,19 @@ export const LivingTankVisualTwin: React.FC<{
                     </>
                   )}
                 </div>
+              </div>
+
+              <div
+                data-testid={`vessel-hardware-badge-${vessel.tankId}`}
+                className="text-xs text-ink-soft pt-1 border-t border-line w-full truncate"
+              >
+                {vessel.vesselHardwareBadgeFa} • {vessel.headspaceProtectionBadgeFa}
+              </div>
+              <div
+                data-testid={`vessel-yeast-badge-${vessel.tankId}`}
+                className="text-xs font-medium text-wine mt-0.5 w-full truncate"
+              >
+                {`مخمر: ${vessel.yeastStrainCode} (${vessel.yeastTempOptRangeFa} • ${vessel.yeastYanDemandFa})`}
               </div>
             </button>
           );

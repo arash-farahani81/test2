@@ -6,8 +6,22 @@ import React, {
   useMemo,
   useState
 } from 'react';
-import type { TankId, WineBatch } from '../types/index.ts';
+import type {
+  CellarEquipmentProfile,
+  EquipmentPresetId,
+  TankId,
+  WineBatch
+} from '../types/index.ts';
 import { enologyDb } from '../db/enologyDatabase.ts';
+import {
+  evaluateEquipmentCapabilities,
+  type EquipmentCapabilitiesSummary,
+  type EquipmentProfileInput
+} from '../utils/equipmentAdapterEngine.ts';
+import {
+  getYeastStrainById,
+  type YeastStrainProfile
+} from '../data/yeastStrainsData.ts';
 
 export type GlobalTankSelection = 'tank-a' | 'tank-b' | 'tank-rose' | 'both-red';
 
@@ -185,8 +199,12 @@ export function getGlossaryItem(key: string): EnologyGlossaryItem | undefined {
  */
 export function resolveEffectiveTankSelection(
   selection: GlobalTankSelection,
-  tankCount: 1 | 2 = 2
+  tankCount: 1 | 2 = 2,
+  produceRoseSaignee: boolean = true
 ): GlobalTankSelection {
+  if (!produceRoseSaignee && selection === 'tank-rose') {
+    return 'tank-a';
+  }
   if (tankCount === 1 && (selection === 'tank-b' || selection === 'both-red')) {
     return 'tank-a';
   }
@@ -232,7 +250,8 @@ export interface TankSelectionOption {
 
 export function getAvailableTankSelections(
   tankCount: 1 | 2 = 2,
-  targetStyle: WineBatch['targetStyle'] = 'red'
+  targetStyle: WineBatch['targetStyle'] = 'red',
+  produceRoseSaignee: boolean = true
 ): TankSelectionOption[] {
   if (targetStyle === 'rose') {
     return [
@@ -243,43 +262,48 @@ export function getAvailableTankSelections(
       }
     ];
   }
-  if (tankCount === 1) {
-    return [
-      {
-        id: 'tank-a',
-        labelFa: 'مخزن قرمز (تک‌مخزنه)',
-        shortLabelFa: 'مخزن قرمز'
-      },
-      {
-        id: 'tank-rose',
-        labelFa: 'گالن رُزه (Saignée)',
-        shortLabelFa: 'رُزه'
-      }
-    ];
+  const baseOptions: TankSelectionOption[] =
+    tankCount === 1
+      ? [
+          {
+            id: 'tank-a',
+            labelFa: 'مخزن قرمز (تک‌مخزنه)',
+            shortLabelFa: 'مخزن قرمز'
+          },
+          {
+            id: 'tank-rose',
+            labelFa: 'گالن رُزه (Saignée)',
+            shortLabelFa: 'رُزه'
+          }
+        ]
+      : [
+          {
+            id: 'tank-a',
+            labelFa: 'مخزن قرمز A',
+            shortLabelFa: 'مخزن A'
+          },
+          {
+            id: 'tank-b',
+            labelFa: 'مخزن قرمز B',
+            shortLabelFa: 'مخزن B'
+          },
+          {
+            id: 'both-red',
+            labelFa: 'هر دو مخزن قرمز (A + B)',
+            shortLabelFa: 'هر دو قرمز (A+B)',
+            isCombinedRed: true
+          },
+          {
+            id: 'tank-rose',
+            labelFa: 'گالن رُزه (Saignée)',
+            shortLabelFa: 'رُزه'
+          }
+        ];
+
+  if (!produceRoseSaignee) {
+    return baseOptions.filter((opt) => opt.id !== 'tank-rose');
   }
-  return [
-    {
-      id: 'tank-a',
-      labelFa: 'مخزن قرمز A',
-      shortLabelFa: 'مخزن A'
-    },
-    {
-      id: 'tank-b',
-      labelFa: 'مخزن قرمز B',
-      shortLabelFa: 'مخزن B'
-    },
-    {
-      id: 'both-red',
-      labelFa: 'هر دو مخزن قرمز (A + B)',
-      shortLabelFa: 'هر دو قرمز (A+B)',
-      isCombinedRed: true
-    },
-    {
-      id: 'tank-rose',
-      labelFa: 'گالن رُزه (Saignée)',
-      shortLabelFa: 'رُزه'
-    }
-  ];
+  return baseOptions;
 }
 
 export function getTankSelectionLabelFa(
@@ -354,6 +378,31 @@ export interface EnologyUiContextValue {
   activeGlossaryItem: EnologyGlossaryItem | null;
   openGlossaryTerm: (key: string) => void;
   closeGlossaryTerm: () => void;
+
+  // Cellar Equipment Profile & Capabilities
+  equipmentProfile: CellarEquipmentProfile;
+  equipmentCapabilities: EquipmentCapabilitiesSummary;
+  isEquipmentOnboardingCompleted: boolean;
+  isEquipmentModalOpen: boolean;
+  openEquipmentModal: () => void;
+  closeEquipmentModal: () => void;
+  saveEquipmentProfile: (
+    profile: Partial<CellarEquipmentProfile> & Partial<EquipmentProfileInput>,
+    markCompleted?: boolean
+  ) => void;
+  applyEquipmentPreset: (
+    presetId: Exclude<EquipmentPresetId, 'custom'>,
+    markCompleted?: boolean
+  ) => void;
+
+  // 36-Strain Global Yeast Bioprocess Selection
+  selectedYeastByTank: Record<TankId, string>;
+  activeTankYeastStrain: YeastStrainProfile;
+  getYeastStrainForTank: (tankId: TankId) => YeastStrainProfile;
+  setSelectedYeastForTank: (tankOrSelection: GlobalTankSelection, strainId: string) => void;
+  isYeastSelectorOpen: boolean;
+  openYeastSelectorModal: () => void;
+  closeYeastSelectorModal: () => void;
 
   // Data synchronization counter across components
   dataVersion: number;
@@ -475,10 +524,36 @@ export const EnologyUiProvider: React.FC<{ children: React.ReactNode }> = ({
   const [isOnboardingOpen, setIsOnboardingOpen] = useState<boolean>(false);
   const [activeGlossaryKey, setActiveGlossaryKey] = useState<string | null>(null);
 
+  const [equipmentProfileState, setEquipmentProfileState] = useState<CellarEquipmentProfile>(() =>
+    enologyDb.getEquipmentProfile()
+  );
+  const [isEquipmentModalOpen, setIsEquipmentModalOpen] = useState<boolean>(
+    () => !enologyDb.isEquipmentOnboardingCompleted()
+  );
+  const [isYeastSelectorOpen, setIsYeastSelectorOpen] = useState<boolean>(false);
+
   const notifyDataChanged = useCallback(() => {
     const latestBatches = enologyDb.getBatches();
     setBatches(latestBatches);
+    setEquipmentProfileState(enologyDb.getEquipmentProfile());
     setDataVersion((v) => v + 1);
+  }, []);
+
+  // Listen to external equipment profile sync events
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleEqSync = (e: Event) => {
+      const customEvent = e as CustomEvent<
+        CellarEquipmentProfile & { scalePrecisionGrams?: ScalePrecisionGrams }
+      >;
+      const latest = customEvent.detail ?? enologyDb.getEquipmentProfile();
+      setEquipmentProfileState(latest);
+      const nextPrecision: ScalePrecisionGrams =
+        latest.scalePrecisionGrams ?? (latest.hasPrecisionScale001g ? 0.01 : 1);
+      setScalePrecisionState(nextPrecision);
+    };
+    window.addEventListener('enology-equipment-profile-sync', handleEqSync);
+    return () => window.removeEventListener('enology-equipment-profile-sync', handleEqSync);
   }, []);
 
   // Hydrate from IndexedDB on first mount if needed
@@ -499,6 +574,11 @@ export const EnologyUiProvider: React.FC<{ children: React.ReactNode }> = ({
     };
   }, [notifyDataChanged]);
 
+  const equipmentCapabilities = useMemo(
+    () => evaluateEquipmentCapabilities(equipmentProfileState),
+    [equipmentProfileState]
+  );
+
   const activeBatch = useMemo(() => {
     return (
       batches.find((b) => b.id === activeBatchIdState) ??
@@ -508,16 +588,24 @@ export const EnologyUiProvider: React.FC<{ children: React.ReactNode }> = ({
   }, [batches, activeBatchIdState]);
 
   const activeBatchId = activeBatch?.id ?? activeBatchIdState;
-  const tankCount: 1 | 2 = activeBatch?.tankCount === 1 ? 1 : 2;
+  const tankCount: 1 | 2 =
+    activeBatch?.tankCount !== undefined
+      ? activeBatch.tankCount
+      : equipmentCapabilities.effectiveTankCount;
+  const produceRoseSaignee =
+    activeBatch?.targetStyle === 'rose'
+      ? true
+      : (equipmentProfileState as CellarEquipmentProfile & { produceRoseSaignee?: boolean })
+          .produceRoseSaignee ?? equipmentProfileState.producesRoseSaignee;
   const hasDemoData = useMemo(() => enologyDb.hasDemoData(), [dataVersion, batches]);
 
-  // Auto-adapt selectedTank when tankCount === 1 or targetStyle === 'rose'
+  // Auto-adapt selectedTank when tankCount === 1, produceRoseSaignee === false, or targetStyle === 'rose'
   const selectedTank = useMemo<GlobalTankSelection>(() => {
     if (activeBatch?.targetStyle === 'rose') {
       return 'tank-rose';
     }
-    return resolveEffectiveTankSelection(rawSelectedTank, tankCount);
-  }, [rawSelectedTank, tankCount, activeBatch?.targetStyle]);
+    return resolveEffectiveTankSelection(rawSelectedTank, tankCount, produceRoseSaignee);
+  }, [rawSelectedTank, tankCount, produceRoseSaignee, activeBatch?.targetStyle]);
 
   useEffect(() => {
     if (selectedTank !== rawSelectedTank) {
@@ -526,27 +614,31 @@ export const EnologyUiProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, [selectedTank, rawSelectedTank]);
 
-  const setActiveBatchId = useCallback((batchId: string) => {
-    setActiveBatchIdState(batchId);
-    writeStorageString(STORAGE_KEY_ACTIVE_BATCH_ID, batchId);
-    writeStorageString(STORAGE_KEY_UI_ACTIVE_BATCH, batchId);
-    const targetBatch = enologyDb.getBatchById(batchId);
-    if (targetBatch?.tankCount === 1) {
+  const setActiveBatchId = useCallback(
+    (batchId: string) => {
+      setActiveBatchIdState(batchId);
+      writeStorageString(STORAGE_KEY_ACTIVE_BATCH_ID, batchId);
+      writeStorageString(STORAGE_KEY_UI_ACTIVE_BATCH, batchId);
+      const targetBatch = enologyDb.getBatchById(batchId);
+      const nextTankCount = targetBatch?.tankCount ?? equipmentCapabilities.effectiveTankCount;
+      const nextProduceRose =
+        targetBatch?.targetStyle === 'rose' ? true : produceRoseSaignee;
       setRawSelectedTank((prev) => {
-        const adapted = resolveEffectiveTankSelection(prev, 1);
+        const adapted = resolveEffectiveTankSelection(prev, nextTankCount, nextProduceRose);
         writeStorageString(STORAGE_KEY_SELECTED_TANK, adapted);
         return adapted;
       });
-    }
-  }, []);
+    },
+    [equipmentCapabilities.effectiveTankCount, produceRoseSaignee]
+  );
 
   const setSelectedTank = useCallback(
     (selection: GlobalTankSelection) => {
-      const adapted = resolveEffectiveTankSelection(selection, tankCount);
+      const adapted = resolveEffectiveTankSelection(selection, tankCount, produceRoseSaignee);
       setRawSelectedTank(adapted);
       writeStorageString(STORAGE_KEY_SELECTED_TANK, adapted);
     },
-    [tankCount]
+    [tankCount, produceRoseSaignee]
   );
 
   const setActiveFiveTab = useCallback((tab: AppFiveTabView) => {
@@ -611,8 +703,13 @@ export const EnologyUiProvider: React.FC<{ children: React.ReactNode }> = ({
   const isBothRedSelected = selectedTank === 'both-red' && tankCount === 2;
 
   const availableTankOptions = useMemo(
-    () => getAvailableTankSelections(tankCount, activeBatch?.targetStyle ?? 'red'),
-    [tankCount, activeBatch?.targetStyle]
+    () =>
+      getAvailableTankSelections(
+        tankCount,
+        activeBatch?.targetStyle ?? 'red',
+        produceRoseSaignee
+      ),
+    [tankCount, activeBatch?.targetStyle, produceRoseSaignee]
   );
 
   const selectedTankLabelFa = useMemo(
@@ -696,6 +793,134 @@ export const EnologyUiProvider: React.FC<{ children: React.ReactNode }> = ({
     [activeGlossaryKey]
   );
 
+  const openEquipmentModal = useCallback(() => {
+    setIsEquipmentModalOpen(true);
+  }, []);
+
+  const closeEquipmentModal = useCallback(() => {
+    setIsEquipmentModalOpen(false);
+  }, []);
+
+  const saveEquipmentProfile = useCallback(
+    (
+      nextProfile: Partial<CellarEquipmentProfile> & Partial<EquipmentProfileInput>,
+      markCompleted: boolean = true
+    ) => {
+      const normalizedRedTankConfig =
+        nextProfile.redTankConfiguration === 'single_tank'
+          ? 'single_primary'
+          : nextProfile.redTankConfiguration === 'dual_split_tanks'
+            ? 'dual_220l_split'
+            : nextProfile.redTankConfig;
+      const normalizedPrimaryTankCount: 1 | 2 | undefined =
+        nextProfile.redTankConfiguration === 'single_tank'
+          ? 1
+          : nextProfile.redTankConfiguration === 'dual_split_tanks'
+            ? 2
+            : nextProfile.primaryTankCount;
+      const normalizedProducesRose =
+        nextProfile.produceRoseSaignee !== undefined
+          ? nextProfile.produceRoseSaignee
+          : nextProfile.producesRoseSaignee;
+      const normalizedHasPrecision001 =
+        nextProfile.scalePrecisionGrams !== undefined
+          ? nextProfile.scalePrecisionGrams === 0.01
+          : nextProfile.hasPrecisionScale !== undefined
+            ? nextProfile.hasPrecisionScale
+            : nextProfile.hasPrecisionScale001g;
+
+      const saved = enologyDb.saveEquipmentProfile({
+        ...(nextProfile as Partial<CellarEquipmentProfile>),
+        ...(normalizedRedTankConfig ? { redTankConfig: normalizedRedTankConfig } : {}),
+        ...(normalizedPrimaryTankCount ? { primaryTankCount: normalizedPrimaryTankCount } : {}),
+        ...(normalizedProducesRose !== undefined
+          ? { producesRoseSaignee: normalizedProducesRose }
+          : {}),
+        ...(normalizedHasPrecision001 !== undefined
+          ? { hasPrecisionScale001g: normalizedHasPrecision001 }
+          : {}),
+        onboardingCompleted: markCompleted
+      });
+      setEquipmentProfileState(saved);
+
+      const nextPrecision: ScalePrecisionGrams =
+        nextProfile.scalePrecisionGrams ?? (saved.hasPrecisionScale001g ? 0.01 : 1);
+      setScalePrecisionState(nextPrecision);
+      const serializedPrecision = JSON.stringify(nextPrecision);
+      writeStorageString(STORAGE_KEY_SCALE_PRECISION, serializedPrecision);
+      writeStorageString(STORAGE_KEY_SCALE_PRECISION_LEGACY, serializedPrecision);
+
+      if (activeBatch) {
+        const nextTankCount: 1 | 2 =
+          nextProfile.redTankConfiguration === 'single_tank' ||
+          saved.redTankConfig === 'single_primary' ||
+          saved.redTankConfig === 'small_30_60l_barrels' ||
+          saved.primaryTankCount === 1
+            ? 1
+            : 2;
+        enologyDb.updateBatch(activeBatch.id, {
+          tankCount: nextTankCount,
+          sugarSource:
+            saved.densityInstrument === 'refractometer_only' ? 'refractometer' : 'hydrometer'
+        });
+      }
+
+      if (markCompleted) {
+        setIsEquipmentModalOpen(false);
+      }
+      notifyDataChanged();
+    },
+    [activeBatch, notifyDataChanged]
+  );
+
+  const applyEquipmentPreset = useCallback(
+    (presetId: Exclude<EquipmentPresetId, 'custom'>, markCompleted: boolean = true) => {
+      const saved = enologyDb.applyEquipmentPreset(presetId);
+      saveEquipmentProfile(saved, markCompleted);
+    },
+    [saveEquipmentProfile]
+  );
+
+  const selectedYeastByTank = useMemo<Record<TankId, string>>(
+    () => ({
+      'tank-a': enologyDb.getSelectedYeastIdForTank('tank-a', activeBatchId),
+      'tank-b': enologyDb.getSelectedYeastIdForTank('tank-b', activeBatchId),
+      'tank-rose': enologyDb.getSelectedYeastIdForTank('tank-rose', activeBatchId)
+    }),
+    [activeBatchId, dataVersion, equipmentProfileState]
+  );
+
+  const getYeastStrainForTank = useCallback(
+    (tId: TankId) => getYeastStrainById(selectedYeastByTank[tId], tId === 'tank-rose'),
+    [selectedYeastByTank]
+  );
+
+  const activeTankYeastStrain = useMemo(
+    () => getYeastStrainForTank(primaryTankId),
+    [getYeastStrainForTank, primaryTankId]
+  );
+
+  const setSelectedYeastForTank = useCallback(
+    (tankOrSelection: GlobalTankSelection, strainId: string) => {
+      const targets: TankId[] =
+        tankOrSelection === 'both-red' ? ['tank-a', 'tank-b'] : [tankOrSelection];
+      for (const tId of targets) {
+        enologyDb.setSelectedYeastForTank(tId, strainId, activeBatchId);
+      }
+      setEquipmentProfileState(enologyDb.getEquipmentProfile());
+      notifyDataChanged();
+    },
+    [activeBatchId, notifyDataChanged]
+  );
+
+  const openYeastSelectorModal = useCallback(() => {
+    setIsYeastSelectorOpen(true);
+  }, []);
+
+  const closeYeastSelectorModal = useCallback(() => {
+    setIsYeastSelectorOpen(false);
+  }, []);
+
   const value = useMemo<EnologyUiContextValue>(
     () => ({
       batches,
@@ -739,6 +964,21 @@ export const EnologyUiProvider: React.FC<{ children: React.ReactNode }> = ({
       activeGlossaryItem,
       openGlossaryTerm,
       closeGlossaryTerm,
+      equipmentProfile: equipmentProfileState,
+      equipmentCapabilities,
+      isEquipmentOnboardingCompleted: equipmentProfileState.onboardingCompleted,
+      isEquipmentModalOpen,
+      openEquipmentModal,
+      closeEquipmentModal,
+      saveEquipmentProfile,
+      applyEquipmentPreset,
+      selectedYeastByTank,
+      activeTankYeastStrain,
+      getYeastStrainForTank,
+      setSelectedYeastForTank,
+      isYeastSelectorOpen,
+      openYeastSelectorModal,
+      closeYeastSelectorModal,
       dataVersion,
       notifyDataChanged
     }),
@@ -779,6 +1019,20 @@ export const EnologyUiProvider: React.FC<{ children: React.ReactNode }> = ({
       activeGlossaryItem,
       openGlossaryTerm,
       closeGlossaryTerm,
+      equipmentProfileState,
+      equipmentCapabilities,
+      isEquipmentModalOpen,
+      openEquipmentModal,
+      closeEquipmentModal,
+      saveEquipmentProfile,
+      applyEquipmentPreset,
+      selectedYeastByTank,
+      activeTankYeastStrain,
+      getYeastStrainForTank,
+      setSelectedYeastForTank,
+      isYeastSelectorOpen,
+      openYeastSelectorModal,
+      closeYeastSelectorModal,
       dataVersion,
       notifyDataChanged
     ]
@@ -801,7 +1055,12 @@ export function useEnologyUi(): EnologyUiContextValue {
   const fallbackBatches = enologyDb.getBatches();
   const fallbackBatch =
     fallbackBatches.find((b) => !b.isDemo) ?? fallbackBatches[0];
-  const fallbackTankCount: 1 | 2 = fallbackBatch?.tankCount === 1 ? 1 : 2;
+  const fallbackEquipment = enologyDb.getEquipmentProfile();
+  const fallbackCapabilities = evaluateEquipmentCapabilities(fallbackEquipment);
+  const fallbackTankCount: 1 | 2 =
+    fallbackBatch?.tankCount !== undefined
+      ? fallbackBatch.tankCount
+      : fallbackCapabilities.effectiveTankCount;
   return {
     batches: fallbackBatches,
     activeBatchId: fallbackBatch?.id ?? 'batch-rasha-1403',
@@ -817,7 +1076,11 @@ export function useEnologyUi(): EnologyUiContextValue {
     effectiveSingleTankId: 'tank-a',
     targetTankIds: ['tank-a'],
     isBothRedSelected: false,
-    availableTankOptions: getAvailableTankSelections(fallbackTankCount),
+    availableTankOptions: getAvailableTankSelections(
+      fallbackTankCount,
+      fallbackBatch?.targetStyle ?? 'red',
+      fallbackCapabilities.produceRoseSaignee
+    ),
     selectedTankLabelFa: getTankSelectionLabelFa('tank-a', fallbackTankCount),
     activeFiveTab: 'today',
     setActiveFiveTab: () => {},
@@ -844,6 +1107,32 @@ export function useEnologyUi(): EnologyUiContextValue {
     activeGlossaryItem: null,
     openGlossaryTerm: () => {},
     closeGlossaryTerm: () => {},
+    equipmentProfile: fallbackEquipment,
+    equipmentCapabilities: fallbackCapabilities,
+    isEquipmentOnboardingCompleted: fallbackEquipment.onboardingCompleted,
+    isEquipmentModalOpen: false,
+    openEquipmentModal: () => {},
+    closeEquipmentModal: () => {},
+    saveEquipmentProfile: () => {},
+    applyEquipmentPreset: () => {},
+    selectedYeastByTank: {
+      'tank-a': enologyDb.getSelectedYeastIdForTank('tank-a', fallbackBatch?.id),
+      'tank-b': enologyDb.getSelectedYeastIdForTank('tank-b', fallbackBatch?.id),
+      'tank-rose': enologyDb.getSelectedYeastIdForTank('tank-rose', fallbackBatch?.id)
+    },
+    activeTankYeastStrain: getYeastStrainById(
+      enologyDb.getSelectedYeastIdForTank('tank-a', fallbackBatch?.id),
+      false
+    ),
+    getYeastStrainForTank: (tId: TankId) =>
+      getYeastStrainById(
+        enologyDb.getSelectedYeastIdForTank(tId, fallbackBatch?.id),
+        tId === 'tank-rose'
+      ),
+    setSelectedYeastForTank: () => {},
+    isYeastSelectorOpen: false,
+    openYeastSelectorModal: () => {},
+    closeYeastSelectorModal: () => {},
     dataVersion: 0,
     notifyDataChanged: () => {}
   };

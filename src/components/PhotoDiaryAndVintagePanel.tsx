@@ -315,6 +315,9 @@ export interface VintagePassportSummary {
   sensoryScoreOutOf5: string;
   wineColorHex: string;
   wineColorLabelFa: string;
+  yeastStrainNameFa?: string;
+  yeastStrainCode?: string;
+  endogenousGlycerolGL?: number;
 }
 
 export function buildVintagePassportSummary(params: {
@@ -328,6 +331,9 @@ export function buildVintagePassportSummary(params: {
   avgScoreOutOf5: string;
   wineColorHex?: string;
   wineColorLabelFa?: string;
+  yeastStrainNameFa?: string;
+  yeastStrainCode?: string;
+  endogenousGlycerolGL?: number;
 }): VintagePassportSummary {
   const sorted = sortFermentationLogs(
     params.logs.filter((l) => !l.isBenchmark)
@@ -382,7 +388,10 @@ export function buildVintagePassportSummary(params: {
       params.wineColorLabelFa ??
       (params.tankId === 'tank-rose'
         ? 'یاقوتی روشن (Saignée)'
-        : 'یاقوتی تیره (رشه سردشت)')
+        : 'یاقوتی تیره (رشه سردشت)'),
+    yeastStrainNameFa: params.yeastStrainNameFa,
+    yeastStrainCode: params.yeastStrainCode,
+    endogenousGlycerolGL: params.endogenousGlycerolGL
   };
 }
 
@@ -742,7 +751,10 @@ export function exportWorkshopCalendarICS(startDateIso: string): string {
 export const PhotoDiaryAndVintagePanel: React.FC<
   PhotoDiaryAndVintagePanelProps
 > = ({ tankId = 'tank-a' }) => {
-  const { activeBatch, dataVersion } = useEnologyUi();
+  const { activeBatch, dataVersion, getYeastStrainForTank, openYeastSelectorModal } =
+    useEnologyUi();
+  void openYeastSelectorModal;
+  const activeTankYeast = getYeastStrainForTank(tankId);
   const [photos, setPhotos] = useState<PhotoDiaryEntry[]>([]);
   const [photoError, setPhotoError] = useState<string | null>(null);
   const [photoCategory, setPhotoCategory] = useState<
@@ -1021,7 +1033,11 @@ export const PhotoDiaryAndVintagePanel: React.FC<
         wineColorHex:
           currentTasting.wineColorHex ??
           (tankId === 'tank-rose' ? '#E88D72' : '#721422'),
-        bodyScore: currentTasting.body ?? currentTasting.appearance ?? 4,
+        bodyScore: Math.min(
+          5,
+          (currentTasting.body ?? currentTasting.appearance ?? 4) +
+            (activeTankYeast.glycerolYieldGL >= 9.5 ? 0.4 : 0)
+        ),
         abvPct: currentBatchMetrics.finalAbvPct
       }),
     [
@@ -1029,7 +1045,8 @@ export const PhotoDiaryAndVintagePanel: React.FC<
       currentTasting.body,
       currentTasting.appearance,
       tankId,
-      currentBatchMetrics.finalAbvPct
+      currentBatchMetrics.finalAbvPct,
+      activeTankYeast.glycerolYieldGL
     ]
   );
 
@@ -1054,9 +1071,19 @@ export const PhotoDiaryAndVintagePanel: React.FC<
       totalSo2AddedMgL: currentBatchMetrics.totalAddedSo2MgL,
       avgScoreOutOf5: currentBatchMetrics.avgTastingScore,
       wineColorHex: currentTasting.wineColorHex,
-      wineColorLabelFa: currentTasting.wineColorLabelFa
+      wineColorLabelFa: currentTasting.wineColorLabelFa,
+      yeastStrainNameFa: `${activeTankYeast.nameFa} (${activeTankYeast.brand})`,
+      yeastStrainCode: activeTankYeast.code,
+      endogenousGlycerolGL: activeTankYeast.glycerolYieldGL
     });
-  }, [tankId, activeBatch, currentBatchMetrics, currentTasting, dataVersion]);
+  }, [
+    tankId,
+    activeBatch,
+    currentBatchMetrics,
+    currentTasting,
+    dataVersion,
+    activeTankYeast
+  ]);
 
   return (
     <div className="space-y-4 font-['Vazirmatn',sans-serif]">
@@ -1870,6 +1897,12 @@ export const PhotoDiaryAndVintagePanel: React.FC<
                 </h5>
                 <div className="text-xs text-ink-soft">
                   {vintagePassport.varietyAndOriginFa} | {vintagePassport.tankLabelFa}
+                </div>
+                <div
+                  data-testid="passport-yeast-strain-info"
+                  className="text-xs font-bold text-wine pt-0.5"
+                >
+                  {`سویه مخمر تخمیر: ${vintagePassport.yeastStrainNameFa} | گلیسیرین درونزاد: ${vintagePassport.endogenousGlycerolGL} g/L`}
                 </div>
               </div>
               <div className="flex items-center gap-3 self-start">

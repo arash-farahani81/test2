@@ -26,7 +26,10 @@ import {
   computeSo2TrajectoryVector
 } from '../components/BandedFermentationChartAndSO2Panel.tsx';
 import type { FermentationLogEntry } from '../types/tracking.ts';
-import type { ChemicalAddition } from '../types/database.ts';
+import {
+  EQUIPMENT_PRESET_MINIMAL_PLUS,
+  type ChemicalAddition
+} from '../types/database.ts';
 
 test('predictFermentationCompletion: estimates remaining days accurately without double-counting kinetic slowdown (Fix 3)', () => {
   const sampleLogs: FermentationLogEntry[] = [
@@ -1184,3 +1187,35 @@ test('computeTimeMachineDaySnapshot & computeSo2TrajectoryVector: computes histo
   assert.ok(twin.airlockBubbleIntervalSec > 0);
   assert.ok(twin.sineWaveAmplitudePx > 0);
 });
+
+test('computeVesselTwinState: adapts vesselHardwareBadgeFa and headspaceProtectionBadgeFa for EQUIPMENT_PRESET_MINIMAL_PLUS at post-press SG = 0.992', () => {
+  const postPressLogs: FermentationLogEntry[] = [
+    {
+      id: 'pp-1',
+      tankId: 'tank-a',
+      dayNumber: 12,
+      dateTime: '1405/07/12',
+      stageTitle: 'پس از پرس',
+      brix: 0,
+      sg: 0.992,
+      tempCap: 18.0,
+      tempRoom: 18.0,
+      ph: 3.52,
+      pigeageDone: false
+    }
+  ];
+
+  const minimalTwin = computeVesselTwinState({
+    tankId: 'tank-a',
+    logs: postPressLogs,
+    equipmentProfile: EQUIPMENT_PRESET_MINIMAL_PLUS
+  });
+
+  assert.ok(minimalTwin.vesselHardwareBadgeFa.includes('10L'));
+  assert.equal(
+    minimalTwin.headspaceProtectionBadgeFa,
+    'لببهلب (Top-up / تیله شیشهای)'
+  );
+  assert.equal(minimalTwin.isStainlessSteel, false);
+});
+

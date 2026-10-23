@@ -35,6 +35,7 @@ import {
 } from '../utils/rightNowEngine.ts';
 import { useEnologyUi } from '../context/EnologyUiContext.tsx';
 import { LivingTankVisualTwin } from './LivingTankVisualTwin.tsx';
+import { formatDoseForEquipment } from '../utils/equipmentAdapterEngine.ts';
 
 export interface BandedFermentationChartAndSO2PanelProps {
   tankId: TankId;
@@ -182,7 +183,7 @@ export function computeSo2TrajectoryVector(params: {
 export const BandedFermentationChartAndSO2Panel: React.FC<
   BandedFermentationChartAndSO2PanelProps
 > = ({ tankId, logs, additions, labAnalyses, onSelectMilestone }) => {
-  const { activeBatch } = useEnologyUi();
+  const { activeBatch, equipmentProfile, equipmentCapabilities } = useEnologyUi();
   const [selectedMilestoneId, setSelectedMilestoneId] = useState<string | null>(
     null
   );
@@ -300,9 +301,10 @@ export const BandedFermentationChartAndSO2Panel: React.FC<
         logs,
         additions,
         activeTankId: tankId,
-        batch: activeBatch
+        batch: activeBatch,
+        equipmentProfile
       }),
-    [logs, additions, tankId, activeBatch]
+    [logs, additions, tankId, activeBatch, equipmentProfile]
   );
 
   const sgMilestones = useMemo(
@@ -826,6 +828,14 @@ export const BandedFermentationChartAndSO2Panel: React.FC<
 
             {/* Interactive What-If SO2 Trajectory Vector SVG (Golden Idea 6) */}
             <div className="pt-2 border-t border-line space-y-1">
+              {!equipmentCapabilities.canMeasureFreeSo2Directly && (
+                <div
+                  data-testid="chart-so2-no-ripper-badge"
+                  className="rounded-lg border border-line bg-paper px-2.5 py-1 text-xs text-ink-soft"
+                >
+                  پروفایل بدون کیت ریپر: پایش بر اساس دفتر حسابداری تجمعی KMS
+                </div>
+              )}
               <svg
                 viewBox="0 0 260 58"
                 data-testid="so2-trajectory-vector-svg"
@@ -904,8 +914,19 @@ export const BandedFermentationChartAndSO2Panel: React.FC<
                 </text>
               </svg>
               <div className="text-xs font-bold text-ink">
-                بردار ارتقاء حفاظت مولکولی: افزودن +{so2Trajectory.kmsGramsNeeded} g KMS ← هدف{' '}
-                {so2Trajectory.targetFreeSo2MgL} mg/L ({so2Trajectory.targetMolecularMgL}{' '}
+                بردار ارتقاء حفاظت مولکولی: افزودن +{so2Trajectory.kmsGramsNeeded} g KMS
+                {so2Trajectory.needsAddition &&
+                  so2Trajectory.kmsGramsNeeded > 0 &&
+                  (() => {
+                    const trajectoryDosePlan = formatDoseForEquipment({
+                      targetDoseGrams: so2Trajectory.kmsGramsNeeded,
+                      compoundNameFa: 'KMS',
+                      compoundCategory: 'kms',
+                      profile: equipmentProfile
+                    });
+                    return ` (${trajectoryDosePlan.primaryDoseTextFa})`;
+                  })()}{' '}
+                ← هدف {so2Trajectory.targetFreeSo2MgL} mg/L ({so2Trajectory.targetMolecularMgL}{' '}
                 mg/L مولکولی)
               </div>
             </div>
@@ -1249,7 +1270,7 @@ export const BandedFermentationChartAndSO2Panel: React.FC<
         {/* Clicked Milestone Detail Popover Card */}
         {selectedMilestone && (
           <div className="bg-paper text-ink rounded-xl p-3 border border-line flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-            <div>
+            <div className="space-y-1.5">
               <div className="flex items-center gap-2">
                 <span className="px-2 py-0.5 rounded bg-wine text-white font-bold text-xs">
                   {selectedMilestone.stateBadgeFa}
@@ -1263,10 +1284,20 @@ export const BandedFermentationChartAndSO2Panel: React.FC<
                   </span>
                 )}
               </div>
-              <div className="text-ink-soft mt-1">
+              <div className="text-ink-soft">
                 {selectedMilestone.tankRows.find((r) => r.tankId === tankId)
                   ?.doseAmountTextFa ?? selectedMilestone.howToExecuteFa}
               </div>
+              {selectedMilestone.reagentSubstitutionWarningFa && (
+                <div className="rounded-lg bg-amber-50 border border-warn p-2 text-xs text-ink">
+                  {selectedMilestone.reagentSubstitutionWarningFa}
+                </div>
+              )}
+              {selectedMilestone.equipmentAdaptationNoteFa && (
+                <div className="text-xs text-ink-soft">
+                  روش اجرا با تجهیزات شما: {selectedMilestone.equipmentAdaptationNoteFa}
+                </div>
+              )}
             </div>
             <button
               type="button"

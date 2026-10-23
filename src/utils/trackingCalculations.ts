@@ -12,6 +12,7 @@ import {
   type DynamicProtocolPlan
 } from '../data/masterProtocolConfig.ts';
 import { enologyDb } from '../db/enologyDatabase.ts';
+import { getYeastStrainById } from '../data/yeastStrainsData.ts';
 
 /**
  * Pure calculation helpers for enological tracking and analytics
@@ -57,7 +58,8 @@ export function specificGravityToBrix(sg: number): number {
 export function getCapTemperatureAlertLevel(
   tempCap: number,
   isRose: boolean = false,
-  currentSG: number = 1.050
+  currentSG: number = 1.050,
+  strainId?: string
 ): 'normal' | 'caution' | 'warning' | 'danger' {
   if (currentSG <= 0.995) {
     if (tempCap > MASTER_PROTOCOL_CONFIG.temperatures.finishedWineAging.dangerAbove) return 'danger';
@@ -69,6 +71,13 @@ export function getCapTemperatureAlertLevel(
     if (tempCap < 18.5 || tempCap > 26.0) return 'warning';
     if (tempCap >= 21.0 && tempCap <= 22.5) return 'normal';
     return 'caution';
+  }
+  if (strainId && currentSG > 1.008) {
+    const strain = getYeastStrainById(strainId, isRose);
+    if (tempCap >= strain.tempDangerC) return 'danger';
+    if (tempCap >= strain.tempWarningC) return 'warning';
+    if (tempCap >= strain.tempOptMaxC - 1.5 || tempCap < strain.tempOptMinC) return 'caution';
+    return 'normal';
   }
   if (isRose) {
     if (tempCap >= MASTER_PROTOCOL_CONFIG.temperatures.roseActiveFermentation.crisisDanger) return 'danger';
@@ -142,9 +151,12 @@ export function analyzeLogEntryHealth(
   log: FermentationLogEntry,
   tankId: TankId = 'tank-a',
   recordedAdditions: ChemicalAddition[] = [],
-  planOverride?: DynamicProtocolPlan
+  planOverride?: DynamicProtocolPlan,
+  strainId?: string
 ): LogHealthAnalysis {
   const isRose = tankId === 'tank-rose';
+  const explicitStrainId = strainId;
+  const activeStrain = explicitStrainId ? getYeastStrainById(explicitStrainId, isRose) : null;
   const sg = log.sg;
   const tempCap = log.tempCap;
   const ph = log.ph;
@@ -214,8 +226,8 @@ export function analyzeLogEntryHealth(
   });
 
   // 2. Stage-Aware Temperature Analysis
-  const redWarnTemp = plan.params.redCapWarningTempC ?? 28.5;
-  const redDangerTemp = plan.params.redCapDangerTempC ?? 30.0;
+  const redWarnTemp = activeStrain ? activeStrain.tempWarningC : (plan.params.redCapWarningTempC ?? 28.5);
+  const redDangerTemp = activeStrain ? activeStrain.tempDangerC : (plan.params.redCapDangerTempC ?? 30.0);
   let tempStatus: 'ideal' | 'good' | 'warning' | 'danger' = 'ideal';
   let tempNote = 'دمای کلاهک/مایع در محدوده خنک و بهینه است';
   let tempTargetRange = isRose ? '16–18 °C' : `20–${redWarnTemp} °C (سقف ${redDangerTemp}°C)`;
@@ -763,6 +775,8 @@ export interface FermentationPredictionResult {
   tempImpactDescription: string;
   isOutOfModelBounds?: boolean;
   nextCriticalStation?: NextCriticalTriggerStation | null;
+  activeYeastStrainId?: string;
+  activeYeastNameFa?: string;
 }
 
 export function computeNextCriticalStation(
@@ -978,6 +992,7 @@ export function predictFermentationCompletion(
   planOverride?: DynamicProtocolPlan
 ): FermentationPredictionResult {
   const isRose = tankId === 'tank-rose';
+  const tankStrain = getYeastStrainById(enologyDb.getSelectedYeastIdForTank(tankId), isRose);
   const planTriggers = (planOverride ?? getCurrentDynamicProtocolPlan()).triggers;
   const defaultTargetSG = isRose ? 0.991 : planTriggers.drynessSG;
   const targetSG = targetSGOverride ?? defaultTargetSG;
@@ -1009,7 +1024,9 @@ export function predictFermentationCompletion(
       kineticAdviceFa: 'تخمیر تازه آغاز شده است؛ پس از ثبت لاگ‌های روزانه ۲ و ۳، دقت پیش‌بینی هوشمند افزایش می‌یابد.',
       tempImpactDescription: 'دمای نرمال کارگاه (۲۲°C) - سرعت استخراج استاندارد.',
       isOutOfModelBounds: false,
-      nextCriticalStation: computeNextCriticalStation(currentSG, 0.0125, isRose, planTriggers)
+      nextCriticalStation: computeNextCriticalStation(currentSG, 0.0125, isRose, planTriggers),
+      activeYeastStrainId: tankStrain.id,
+      activeYeastNameFa: tankStrain.nameFa
     };
   }
 
@@ -1035,7 +1052,9 @@ export function predictFermentationCompletion(
       kineticAdviceFa: 'قند به پایان رسیده و شراب به خشکی مطلق رسیده است. آمادگی برای سیفون، خنک‌سازی و سولفیت‌زنی.',
       tempImpactDescription: 'تخمیر متوقف شده (قند مصرف شده است).',
       isOutOfModelBounds: false,
-      nextCriticalStation: null
+      nextCriticalStation: null,
+      activeYeastStrainId: tankStrain.id,
+      activeYeastNameFa: tankStrain.nameFa
     };
   }
 
@@ -1178,7 +1197,9 @@ export function predictFermentationCompletion(
     kineticAdviceFa,
     tempImpactDescription,
     isOutOfModelBounds,
-    nextCriticalStation
+    nextCriticalStation,
+    activeYeastStrainId: tankStrain.id,
+    activeYeastNameFa: tankStrain.nameFa
   };
 }
 

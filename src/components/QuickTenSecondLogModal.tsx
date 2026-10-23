@@ -47,6 +47,7 @@ import {
   useEnologyUi,
   type GlobalTankSelection
 } from '../context/EnologyUiContext.tsx';
+import { formatDoseForEquipment } from '../utils/equipmentAdapterEngine.ts';
 
 export type QuickSheetPresetMode = 'measurement' | 'addition' | 'lab';
 
@@ -295,7 +296,10 @@ export const QuickTenSecondLogModal: React.FC<QuickTenSecondLogModalProps> = ({
     tankCount,
     activeBatch,
     quickLogTankOverride,
-    notifyDataChanged
+    notifyDataChanged,
+    scalePrecision,
+    equipmentProfile,
+    equipmentCapabilities
   } = useEnologyUi();
 
   const [mode, setMode] = useState<QuickSheetPresetMode>(initialMode);
@@ -432,10 +436,23 @@ export const QuickTenSecondLogModal: React.FC<QuickTenSecondLogModalProps> = ({
         nextSelection === 'both-red' ? 'tank-a' : nextSelection;
       setTankSelection(nextSelection);
       setMode(initialMode);
+      setCalibrationTemp(
+        equipmentCapabilities.defaultHydrometerCalibrationTemp
+      );
+      if (equipmentCapabilities.primarySugarInputMode === 'refractometer_brix') {
+        setOpenRefractSection(true);
+      }
       loadLatestTankDefaults(resolvedTank);
       setPostSaveSummary(null);
     }
-  }, [isOpen, initialTankId, initialMode, quickLogTankOverride]);
+  }, [
+    isOpen,
+    initialTankId,
+    initialMode,
+    quickLogTankOverride,
+    equipmentCapabilities.defaultHydrometerCalibrationTemp,
+    equipmentCapabilities.primarySugarInputMode
+  ]);
 
   // BUG-62: Escape key handler when modal is open
   useEffect(() => {
@@ -833,7 +850,8 @@ export const QuickTenSecondLogModal: React.FC<QuickTenSecondLogModalProps> = ({
       additions: enologyDb.getAdditions(undefined, false, currentBatch?.id),
       activeTankId: tankId,
       batch: currentBatch,
-      excludeDemo: !enologyDb.hasDemoData()
+      excludeDemo: !enologyDb.hasDemoData(),
+      equipmentProfile
     });
 
     const primary = queue.primaryAction;
@@ -924,7 +942,8 @@ export const QuickTenSecondLogModal: React.FC<QuickTenSecondLogModalProps> = ({
       additions: enologyDb.getAdditions(undefined, false, currentBatch?.id),
       activeTankId: tankId,
       batch: currentBatch,
-      excludeDemo: !enologyDb.hasDemoData()
+      excludeDemo: !enologyDb.hasDemoData(),
+      equipmentProfile
     });
     const primary = queue.primaryAction;
     const activeTankRow =
@@ -1259,6 +1278,96 @@ export const QuickTenSecondLogModal: React.FC<QuickTenSecondLogModalProps> = ({
             <form onSubmit={handleSaveMeasurement} className="space-y-4">
               {/* Core Field 1 & 2: SG Input (Safe Empty Default + Gray Placeholder + Explicit Fill Chip) & Sample Temp */}
               <div className="bg-paper border border-line rounded-2xl p-3.5 space-y-3">
+                <div className="text-xs text-ink-soft font-medium">
+                  {equipmentCapabilities.primarySugarInputMode ===
+                  'refractometer_brix'
+                    ? 'ابزار اصلی کارگاه شما: رفراکتومتر بریکس (تبدیل خودکار تِریل به SG فعال است)'
+                    : equipmentCapabilities.primarySugarInputMode ===
+                      'sensory_timeline'
+                    ? 'حالت بدون هیدرومتر: انتخابگر بصری مرحله تخمیر فعال است'
+                    : `ابزار اصلی کارگاه شما: هیدرومتر کالیبره ${calibrationTemp}°C`}
+                </div>
+
+                {equipmentCapabilities.primarySugarInputMode ===
+                  'refractometer_brix' && (
+                  <div
+                    data-testid="primary-refractometer-brix-box"
+                    className="rounded-xl border border-wine/40 bg-paper p-3 mb-3 space-y-2"
+                  >
+                    <label
+                      htmlFor="primary-refract-brix-input"
+                      className="block text-xs font-bold text-ink"
+                    >
+                      قرائت رفراکتومتر (°Brix) — تبدیل خودکار تِریل به SG:
+                    </label>
+                    <input
+                      id="primary-refract-brix-input"
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="مثلاً 12.5"
+                      value={refractBrixInput}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setRefractBrixInput(val);
+                        const parsed = normalizeEnologyNumericInput(
+                          val,
+                          'general'
+                        );
+                        if (parsed !== null && parsed > 0) {
+                          const corr = calculateRefractometerCorrection(
+                            batchPlan.params.initialBrix,
+                            parsed
+                          );
+                          setRawSGInput(corr.trueSG.toFixed(3));
+                        }
+                      }}
+                      className="w-full min-h-[46px] bg-surface border border-wine/50 rounded-xl px-3 text-center text-base font-mono font-bold text-ink"
+                    />
+                    {refractResult && (
+                      <div className="text-xs ltr-metric font-bold text-wine">
+                        {`True SG = ${refractResult.trueSG.toFixed(3)} | ABV ~${refractResult.abv.toFixed(1)}%`}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {equipmentCapabilities.primarySugarInputMode ===
+                  'sensory_timeline' && (
+                  <div
+                    data-testid="sensory-sg-estimator-strip"
+                    className="rounded-xl border border-line bg-paper p-3 mb-3 space-y-2"
+                  >
+                    <div className="text-xs font-bold text-ink">
+                      تخمین سریع چگالی بر اساس مشاهدات حباب CO2 و طعم (ویژه کارگاه بدون هیدرومتر):
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                      {[
+                        { labelFa: 'شروع / فاز لگ (شیرین)', sg: '1.085' },
+                        { labelFa: 'اوج حباب طوفانی', sg: '1.068' },
+                        { labelFa: 'نیمه راه تخمیر', sg: '1.045' },
+                        { labelFa: 'نقطه پرسینگ (کمشیرین)', sg: '1.008' },
+                        { labelFa: 'خشک و بدون حباب', sg: '0.993' }
+                      ].map((stage) => (
+                        <button
+                          key={stage.sg}
+                          type="button"
+                          onClick={() => setRawSGInput(stage.sg)}
+                          className={`px-2.5 py-2 rounded-lg border text-xs font-bold flex items-center justify-between gap-2 cursor-pointer transition-colors ${
+                            rawSGInput === stage.sg
+                              ? 'bg-wine text-white border-wine'
+                              : 'bg-surface text-ink border-line hover:bg-paper'
+                          }`}
+                        >
+                          <span>{stage.labelFa}</span>
+                          <span className="ltr-metric font-mono">
+                            {stage.sg}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <label
                     htmlFor="quick-sg-input"
@@ -1833,6 +1942,11 @@ export const QuickTenSecondLogModal: React.FC<QuickTenSecondLogModalProps> = ({
                     }`}
                   >
                     <span>pH و TA</span>
+                    <span className="opacity-80 font-normal">
+                      ({equipmentCapabilities.canMeasurePhDirectly
+                        ? 'کیت pH فعال'
+                        : 'فاقد کیت — اختیاری'})
+                    </span>
                     {openPhTaSection ? (
                       <ChevronUp className="w-3.5 h-3.5" />
                     ) : (
@@ -1850,6 +1964,11 @@ export const QuickTenSecondLogModal: React.FC<QuickTenSecondLogModalProps> = ({
                     }`}
                   >
                     <span>سولفیت آزاد</span>
+                    <span className="opacity-80 font-normal">
+                      ({equipmentCapabilities.canMeasureFreeSo2Directly
+                        ? 'کیت SO2 فعال'
+                        : 'فاقد کیت ریپر — اختیاری'})
+                    </span>
                     {openFreeSo2Section ? (
                       <ChevronUp className="w-3.5 h-3.5" />
                     ) : (
@@ -2184,6 +2303,43 @@ export const QuickTenSecondLogModal: React.FC<QuickTenSecondLogModalProps> = ({
                     onChange={(e) => setRawAdditionAmount(e.target.value)}
                     className="w-full min-h-[52px] bg-surface border-2 border-wine/60 rounded-xl px-3 text-center text-xl font-mono font-bold text-ink placeholder:text-ink-soft placeholder:text-xs"
                   />
+
+                  {(() => {
+                    if (
+                      currentCompoundPreset.unit !== 'g' ||
+                      parsedAdditionAmount === null ||
+                      parsedAdditionAmount <= 0
+                    ) {
+                      return null;
+                    }
+                    const additionDosePlan = formatDoseForEquipment({
+                      targetDoseGrams: parsedAdditionAmount,
+                      compoundNameFa: currentCompoundPreset.nameFa,
+                      compoundCategory:
+                        selectedCompoundType === 'kms'
+                          ? 'kms'
+                          : selectedCompoundType === 'zinc'
+                          ? 'zinc'
+                          : selectedCompoundType === 'fermaid_o' ||
+                            selectedCompoundType === 'fermaid_k' ||
+                            selectedCompoundType === 'yeast' ||
+                            selectedCompoundType === 'go_ferm'
+                          ? 'fermaid_or_yeast'
+                          : 'general',
+                      profile: equipmentProfile
+                    });
+                    if (additionDosePlan.executionMode !== 'stock_syringe') {
+                      return null;
+                    }
+                    return (
+                      <div
+                        data-testid="quick-addition-stock-syringe-hint"
+                        className="rounded-xl border border-wine/30 bg-paper p-2.5 mt-2 text-xs text-ink"
+                      >
+                        {`راهنمای سرنگ استوک (متناسب با ترازوی ${scalePrecision}g شما): ${additionDosePlan.primaryDoseTextFa} — ${additionDosePlan.instructionFa}`}
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">

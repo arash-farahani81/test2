@@ -39,6 +39,7 @@ import {
 } from '../data/masterProtocolConfig.ts';
 import { InteractiveLabWizardsPanel } from './InteractiveLabWizardsPanel.tsx';
 import { useEnologyUi } from '../context/EnologyUiContext.tsx';
+import { getLabToolEquipmentCompatibility } from '../utils/equipmentAdapterEngine.ts';
 import {
   calculateTitratableAcidity,
   calculateTartaricAddition,
@@ -233,8 +234,14 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
     targetTankIds,
     selectedTankLabelFa,
     scalePrecision,
-    notifyDataChanged
+    notifyDataChanged,
+    equipmentProfile,
+    equipmentCapabilities,
+    openEquipmentModal,
+    activeTankYeastStrain,
+    openYeastSelectorModal
   } = useEnologyUi();
+  const [onlyMyEquipmentTools, setOnlyMyEquipmentTools] = useState<boolean>(false);
   const [activeSubTab, setActiveSubTab] = useState<LabHubSubTab>(initialActiveSubTab);
   const [selectedFilter, setSelectedFilter] = useState<string>(() =>
     mapTestIdToSopFilter(initialSelectedTest)
@@ -609,7 +616,8 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
       fermaidK2RateGL: flexParams.fermaidK2RedRateGL,
       dap2RateGL: flexParams.dap2RedRateGL,
       fermaidO3RateGL: flexParams.fermaidO3RedRateGL,
-      zincRateGL: flexParams.zincSafeRateGL
+      zincRateGL: flexParams.zincSafeRateGL,
+      yanMultiplierOverride: activeTankYeastStrain.yanMultiplier
     }
   );
 
@@ -1006,6 +1014,7 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
         freeSO2: tsSO2,
         isRose: tsIsRose,
         isUnpressedMash: tsUnpressed,
+        equipmentProfile,
         issues: {
           isStuckFermentation: tsStuck,
           hasH2S: tsH2S,
@@ -1025,6 +1034,7 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
       tsSO2,
       tsIsRose,
       tsUnpressed,
+      equipmentProfile,
       tsStuck,
       tsH2S,
       tsVA,
@@ -1072,6 +1082,46 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
     { id: 'sop-08', label: '۸. فینینگ بنتونیت و استوک مس' },
     { id: 'sop-09', label: '۹. موازنه جرم و مقیاس‌پذیری بچ' },
   ];
+
+  const shouldShowSopCard = (sopId: string): boolean => {
+    if (selectedFilter !== 'all' && selectedFilter !== sopId) return false;
+    if (!onlyMyEquipmentTools) return true;
+    const compat = getLabToolEquipmentCompatibility(sopId, equipmentProfile);
+    return (
+      compat.isDirectlySupported ||
+      sopId === 'sop-09' ||
+      sopId === 'sop-06' ||
+      sopId === 'test-scale' ||
+      sopId === 'test-cooling'
+    );
+  };
+
+  const renderSopCompatBadge = (sopId: string) => {
+    const toolCompat = getLabToolEquipmentCompatibility(sopId, equipmentProfile);
+    return (
+      <span
+        data-testid={`sop-compat-badge-${sopId}`}
+        className={`px-2 py-0.5 rounded-md text-xs font-bold border ${
+          toolCompat.isDirectlySupported
+            ? 'border-emerald-500/40 bg-emerald-500/10 text-ok'
+            : 'border-amber-500/40 bg-amber-500/10 text-warn'
+        }`}
+      >
+        {toolCompat.badgeFa}
+      </span>
+    );
+  };
+
+  const renderSopFallbackBox = (sopId: string) => {
+    const toolCompat = getLabToolEquipmentCompatibility(sopId, equipmentProfile);
+    if (toolCompat.isDirectlySupported) return null;
+    return (
+      <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 mb-3 text-xs text-ink">
+        <span className="font-bold">روش جایگزین بدون کیت آزمایشگاهی: </span>
+        <span>{toolCompat.fallbackGuidanceFa}</span>
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto my-4 font-['Vazirmatn',sans-serif]">
@@ -1329,6 +1379,43 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
             }
           />
 
+          {/* Equipment Kit Status Bar */}
+          <div
+            data-testid="lab-equipment-profile-bar"
+            className="bg-surface p-3.5 rounded-xl border border-line shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs"
+          >
+            <div className="flex items-center gap-2 text-ink font-bold flex-wrap">
+              <FlaskConical className="w-4 h-4 text-wine shrink-0" />
+              <span>
+                پروفایل تجهیزات آزمایشگاه: {equipmentCapabilities.presetTitleFa} (
+                {equipmentCapabilities.shortBadgeFa})
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                data-testid="toggle-only-my-equipment-tools"
+                onClick={() => setOnlyMyEquipmentTools((prev) => !prev)}
+                className={`px-3 py-1.5 rounded-lg border text-xs font-bold transition-colors cursor-pointer ${
+                  onlyMyEquipmentTools
+                    ? 'bg-wine text-white border-wine'
+                    : 'bg-paper hover:bg-stone-200/60 text-ink border-line'
+                }`}
+              >
+                {onlyMyEquipmentTools
+                  ? 'نمایش همه ابزارها و راهنماهای جایگزین'
+                  : 'فقط ابزارهای منطبق با تجهیزات من'}
+              </button>
+              <button
+                type="button"
+                onClick={() => openEquipmentModal()}
+                className="px-3 py-1.5 rounded-lg bg-paper hover:bg-stone-200/60 text-ink border border-line text-xs font-bold transition-colors cursor-pointer"
+              >
+                ویرایش تجهیزات
+              </button>
+            </div>
+          </div>
+
           {/* Category Filter Bar + Expand/Collapse All SOPs */}
           <div className="bg-surface p-4 rounded-xl border border-line shadow-xs space-y-3">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -1374,7 +1461,7 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
           {/* ----------------------------------------------------------------- */}
           {/* TOOL 1 (SOP-01): Hydrometer, Brix & Refractometer Calibration     */}
           {/* ----------------------------------------------------------------- */}
-          {(selectedFilter === 'all' || selectedFilter === 'sop-01') && (
+          {shouldShowSopCard('sop-01') && (
             <div
               id="lab-test-card-sop-01"
               className={`bg-surface rounded-xl border border-line shadow-xs overflow-hidden ${
@@ -1389,10 +1476,11 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
                     <Gauge className="w-5 h-5" />
                   </div>
                   <div>
-                    <div className="flex items-center gap-2 text-xs text-ink-soft font-mono font-bold">
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-ink-soft font-mono font-bold">
                       <span>SOP-TEST-01</span>
                       <span>·</span>
                       <span>SG_True(20°C) = SG_Measured + ΔSG</span>
+                      {renderSopCompatBadge('sop-01')}
                     </div>
                     <h3 className="font-bold text-sm sm:text-base text-ink mt-0.5">
                       ۱. سنجش وزن مخصوص (SG)، بریکس و تصحیح دمایی هیدرومتر / رفرکتومتر
@@ -1561,6 +1649,7 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
                 {/* BOTTOM HALF: Collapsible Step-by-Step Laboratory SOP */}
                 {expandedTests['sop-01'] && (
                   <div className="pt-4 border-t border-stone-200 space-y-5">
+                    {renderSopFallbackBox('sop-01')}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                       <div className="p-3.5 bg-rose-50/60 rounded-xl border border-rose-200/80 space-y-1.5">
                         <h4 className="font-bold text-rose-950 flex items-center gap-1.5">
@@ -1666,7 +1755,7 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
           {/* ----------------------------------------------------------------- */}
           {/* TOOL 2 (SOP-02): Titratable Acidity (TA) & Tartaric Addition      */}
           {/* ----------------------------------------------------------------- */}
-          {(selectedFilter === 'all' || selectedFilter === 'sop-02') && (
+          {shouldShowSopCard('sop-02') && (
             <div
               id="lab-test-card-sop-02"
               className={`bg-surface rounded-xl border border-line shadow-xs overflow-hidden ${
@@ -1681,10 +1770,11 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
                     <FlaskConical className="w-5 h-5" />
                   </div>
                   <div>
-                    <div className="flex items-center gap-2 text-xs text-ink-soft font-mono font-bold">
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-ink-soft font-mono font-bold">
                       <span>SOP-TEST-02</span>
                       <span>·</span>
                       <span>TA (g/L) = (V_NaOH × N × 75) / V_sample</span>
+                      {renderSopCompatBadge('sop-02')}
                     </div>
                     <h3 className="font-bold text-sm sm:text-base text-ink mt-0.5">
                       ۲. تیتراسیون اسیدیته کل قابل تیتر (TA) و محاسبه اسید تارتاریک تکمیلی
@@ -1890,6 +1980,7 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
                 {/* BOTTOM HALF: Collapsible SOP */}
                 {expandedTests['sop-02'] && (
                   <div className="pt-4 border-t border-stone-200 space-y-5">
+                    {renderSopFallbackBox('sop-02')}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                       <div className="p-3.5 bg-amber-50/60 rounded-xl border border-amber-200/80 space-y-1.5">
                         <h4 className="font-bold text-amber-950 flex items-center gap-1.5">
@@ -1960,7 +2051,7 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
           {/* ----------------------------------------------------------------- */}
           {/* TOOL 3 (SOP-03): pH Meter Calibration & Bidirectional Adjustment   */}
           {/* ----------------------------------------------------------------- */}
-          {(selectedFilter === 'all' || selectedFilter === 'sop-03') && (
+          {shouldShowSopCard('sop-03') && (
             <div
               id="lab-test-card-sop-03"
               className={`bg-surface rounded-xl border border-line shadow-xs overflow-hidden ${
@@ -1975,10 +2066,11 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
                     <Gauge className="w-5 h-5" />
                   </div>
                   <div>
-                    <div className="flex items-center gap-2 text-xs text-ink-soft font-mono font-bold">
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-ink-soft font-mono font-bold">
                       <span>SOP-TEST-03</span>
                       <span>·</span>
                       <span>Δ0.1 pH / Δ1.0 g/L TA: 1.0 g/L Tartaric | 1.33 g/L KHCO3</span>
+                      {renderSopCompatBadge('sop-03')}
                     </div>
                     <h3 className="font-bold text-sm sm:text-base text-ink mt-0.5">
                       ۳. کالیبراسیون pH سنج و محاسبه دوطرفه اسیدزایی (تارتاریک) یا اسیدزدایی استوکیومتری (KHCO3 / CaCO3)
@@ -2201,6 +2293,7 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
                 {/* BOTTOM HALF: Collapsible SOP */}
                 {expandedTests['sop-03'] && (
                   <div className="pt-4 border-t border-stone-200 space-y-5">
+                    {renderSopFallbackBox('sop-03')}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                       <div className="p-3.5 bg-emerald-50/60 rounded-xl border border-emerald-200/80 space-y-1.5">
                         <h4 className="font-bold text-emerald-950 flex items-center gap-1.5">
@@ -2271,7 +2364,7 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
           {/* ----------------------------------------------------------------- */}
           {/* TOOL 4 (SOP-04): Free SO2 Ripper, Molecular SO2 & KMS Calculator   */}
           {/* ----------------------------------------------------------------- */}
-          {(selectedFilter === 'all' || selectedFilter === 'sop-04') && (
+          {shouldShowSopCard('sop-04') && (
             <div
               id="lab-test-card-sop-04"
               className={`bg-surface rounded-xl border border-line shadow-xs overflow-hidden ${
@@ -2286,10 +2379,11 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
                     <FlaskConical className="w-5 h-5" />
                   </div>
                   <div>
-                    <div className="flex items-center gap-2 text-xs text-ink-soft font-mono font-bold">
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-ink-soft font-mono font-bold">
                       <span>SOP-TEST-04</span>
                       <span>·</span>
                       <span>KMS (g) = (ΔSO2 × V) / 570 (بازده ۵۷٪ سولفیت فعال)</span>
+                      {renderSopCompatBadge('sop-04')}
                     </div>
                     <h3 className="font-bold text-sm sm:text-base text-ink mt-0.5">
                       ۴. سنجش سولفیت آزاد به روش ریپر، SO2 مولکولی و محاسبه‌گر متابی‌سولفیت (KMS)
@@ -2646,6 +2740,7 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
                 {/* BOTTOM HALF: Collapsible SOP */}
                 {expandedTests['sop-04'] && (
                   <div className="pt-4 border-t border-stone-200 space-y-5">
+                    {renderSopFallbackBox('sop-04')}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                       <div className="p-3.5 bg-rose-50/60 rounded-xl border border-rose-200/80 space-y-1.5">
                         <h4 className="font-bold text-rose-950 flex items-center gap-1.5">
@@ -2714,7 +2809,7 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
           {/* ----------------------------------------------------------------- */}
           {/* TOOL 5 (SOP-05): YAN Budget & 3-Stage SNA Calculator              */}
           {/* ----------------------------------------------------------------- */}
-          {(selectedFilter === 'all' || selectedFilter === 'sop-05') && (
+          {shouldShowSopCard('sop-05') && (
             <div
               id="lab-test-card-sop-05"
               className={`bg-surface rounded-xl border border-line shadow-xs overflow-hidden ${
@@ -2729,10 +2824,11 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
                     <Sparkles className="w-5 h-5" />
                   </div>
                   <div>
-                    <div className="flex items-center gap-2 text-xs text-ink-soft font-mono font-bold">
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-ink-soft font-mono font-bold">
                       <span>SOP-TEST-05</span>
                       <span>·</span>
                       <span>Sugar(g/L) = Brix × 10 × SG | Target YAN = Sugar × 1.05</span>
+                      {renderSopCompatBadge('sop-05')}
                     </div>
                     <h3 className="font-bold text-sm sm:text-base text-ink mt-0.5">
                       ۵. بودجه‌بندی نیتروژن قابل جذب (YAN) و برنامه تغذیه ۳ مرحله‌ای (SNA)
@@ -2765,6 +2861,26 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
               <div className="p-5 sm:p-6 space-y-5">
                 {/* TOP HALF: Interactive Calculator */}
                 <div className="bg-stone-50 p-4 rounded-xl border border-stone-200 space-y-4">
+                  <div
+                    data-testid="yan-calc-active-yeast-banner"
+                    className="rounded-xl border border-line bg-paper p-3 mb-3 flex flex-wrap items-center justify-between gap-2 text-xs text-ink"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-bold">
+                        {`سویه مخمر فعال مخزن: ${activeTankYeastStrain.nameFa} (${activeTankYeastStrain.brand})`}
+                      </span>
+                      <span className="ltr-metric font-bold text-wine">
+                        ضریب YAN: ×{activeTankYeastStrain.yanMultiplier} | دوز تلقیح: {activeTankYeastStrain.recommendedDoseGL} g/L در {activeTankYeastStrain.rehydrationTempC}°C
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={openYeastSelectorModal}
+                      className="rounded-lg bg-wine text-white px-3 py-1.5 text-xs font-bold cursor-pointer"
+                    >
+                      تغییر سویه مخمر (۳۶ سویه)
+                    </button>
+                  </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
                     <div>
                       <label className="block text-stone-700 font-bold mb-1">
@@ -3084,6 +3200,7 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
                 {/* BOTTOM HALF: Collapsible SOP */}
                 {expandedTests['sop-05'] && (
                   <div className="pt-4 border-t border-stone-200 space-y-5">
+                    {renderSopFallbackBox('sop-05')}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                       <div className="p-3.5 bg-purple-50/60 rounded-xl border border-purple-200/80 space-y-1.5">
                         <h4 className="font-bold text-purple-950 flex items-center gap-1.5">
@@ -3154,7 +3271,7 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
           {/* ----------------------------------------------------------------- */}
           {/* TOOL 6 (SOP-06): Cap Temperature & Thermal Cooling Calculator     */}
           {/* ----------------------------------------------------------------- */}
-          {(selectedFilter === 'all' || selectedFilter === 'sop-06') && (
+          {shouldShowSopCard('sop-06') && (
             <div
               id="lab-test-card-sop-06"
               className={`bg-surface rounded-xl border border-line shadow-xs overflow-hidden ${
@@ -3169,10 +3286,11 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
                     <Thermometer className="w-5 h-5" />
                   </div>
                   <div>
-                    <div className="flex items-center gap-2 text-xs text-ink-soft font-mono font-bold">
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-ink-soft font-mono font-bold">
                       <span>SOP-TEST-06</span>
                       <span>·</span>
                       <span>Q = m × Cp × ΔT (Cp = 3.9 kJ/kg·°C)</span>
+                      {renderSopCompatBadge('sop-06')}
                     </div>
                     <h3 className="font-bold text-sm sm:text-base text-ink mt-0.5">
                       ۶. پایش حرارتی مغز کلاهک و محاسبه یخ خشک یا بطری یخ خنک‌کننده
@@ -3290,6 +3408,7 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
                 {/* BOTTOM HALF: Collapsible SOP */}
                 {expandedTests['sop-06'] && (
                   <div className="pt-4 border-t border-stone-200 space-y-4 text-xs">
+                    {renderSopFallbackBox('sop-06')}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="p-3.5 bg-rose-50/60 rounded-xl border border-rose-200/80 space-y-1.5">
                         <h4 className="font-bold text-rose-950 flex items-center gap-1.5">
@@ -3322,7 +3441,7 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
           {/* ----------------------------------------------------------------- */}
           {/* TOOL 7 (SOP-07): Dryness & Residual Sugar Verification            */}
           {/* ----------------------------------------------------------------- */}
-          {(selectedFilter === 'all' || selectedFilter === 'sop-07') && (
+          {shouldShowSopCard('sop-07') && (
             <div
               id="lab-test-card-sop-07"
               className={`bg-surface rounded-xl border border-line shadow-xs overflow-hidden ${
@@ -3337,10 +3456,11 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
                     <CheckCircle2 className="w-5 h-5" />
                   </div>
                   <div>
-                    <div className="flex items-center gap-2 text-xs text-ink-soft font-mono font-bold">
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-ink-soft font-mono font-bold">
                       <span>SOP-TEST-07</span>
                       <span>·</span>
                       <span>SG(20°C) ≤ 0.993 &amp; Residual Sugar &lt; 2.0 g/L</span>
+                      {renderSopCompatBadge('sop-07')}
                     </div>
                     <h3 className="font-bold text-sm sm:text-base text-ink mt-0.5">
                       ۷. تست خشکی نهایی شراب (Dryness) و پایش قندهای احیاکننده (Clinitest)
@@ -3427,24 +3547,27 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
 
                 {/* BOTTOM HALF: Collapsible SOP */}
                 {expandedTests['sop-07'] && (
-                  <div className="pt-4 border-t border-stone-200 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-                    <div className="border border-stone-200 p-3.5 rounded-xl bg-white space-y-1">
-                      <span className="font-bold text-teal-900 block">معیار ۱ · وزن مخصوص زیر ۱.۰۰۰</span>
-                      <p className="text-stone-600 leading-relaxed">
-                        چون چگالی الکل خالص ۰.۷۸۹ است، با مصرف تمام قندها، SG نهایی در ۲۰ درجه باید به بازه <strong>0.992 تا 0.994</strong> برسد.
-                      </p>
-                    </div>
-                    <div className="border border-stone-200 p-3.5 rounded-xl bg-white space-y-1">
-                      <span className="font-bold text-teal-900 block">معیار ۲ · ثبات متوالی هیدرومتر</span>
-                      <p className="text-stone-600 leading-relaxed">
-                        قرائت هیدرومتر باید طی ۲ تا ۳ روز متوالی در همان دما هیچ تغییری نکند (عدم تولید حباب‌های ریز CO2 در نمونه).
-                      </p>
-                    </div>
-                    <div className="border border-stone-200 p-3.5 rounded-xl bg-white space-y-1">
-                      <span className="font-bold text-teal-900 block">معیار ۳ · تست شیمیایی قند (Clinitest)</span>
-                      <p className="text-stone-600 leading-relaxed">
-                        تست قرص کلینیتست یا محلول فهلینگ A و B باید قند باقی‌مانده کمتر از <strong>2.0 g/L</strong> را نشان دهد تا خطر کدورت، گازدار شدن یا بالا زدن چوب‌پنبه در بطری به صفر برسد.
-                      </p>
+                  <div className="pt-4 border-t border-stone-200 space-y-3 text-xs">
+                    {renderSopFallbackBox('sop-07')}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="border border-stone-200 p-3.5 rounded-xl bg-white space-y-1">
+                        <span className="font-bold text-teal-900 block">معیار ۱ · وزن مخصوص زیر ۱.۰۰۰</span>
+                        <p className="text-stone-600 leading-relaxed">
+                          چون چگالی الکل خالص ۰.۷۸۹ است، با مصرف تمام قندها، SG نهایی در ۲۰ درجه باید به بازه <strong>0.992 تا 0.994</strong> برسد.
+                        </p>
+                      </div>
+                      <div className="border border-stone-200 p-3.5 rounded-xl bg-white space-y-1">
+                        <span className="font-bold text-teal-900 block">معیار ۲ · ثبات متوالی هیدرومتر</span>
+                        <p className="text-stone-600 leading-relaxed">
+                          قرائت هیدرومتر باید طی ۲ تا ۳ روز متوالی در همان دما هیچ تغییری نکند (عدم تولید حباب‌های ریز CO2 در نمونه).
+                        </p>
+                      </div>
+                      <div className="border border-stone-200 p-3.5 rounded-xl bg-white space-y-1">
+                        <span className="font-bold text-teal-900 block">معیار ۳ · تست شیمیایی قند (Clinitest)</span>
+                        <p className="text-stone-600 leading-relaxed">
+                          تست قرص کلینیتست یا محلول فهلینگ A و B باید قند باقی‌مانده کمتر از <strong>2.0 g/L</strong> را نشان دهد تا خطر کدورت، گازدار شدن یا بالا زدن چوب‌پنبه در بطری به صفر برسد.
+                        </p>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -3455,7 +3578,7 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
           {/* ----------------------------------------------------------------- */}
           {/* TOOL 8 (SOP-08): Bench Fining (Bentonite) & Copper Sulfate Stock  */}
           {/* ----------------------------------------------------------------- */}
-          {(selectedFilter === 'all' || selectedFilter === 'sop-08') && (
+          {shouldShowSopCard('sop-08') && (
             <div
               id="lab-test-card-sop-08"
               className={`bg-surface rounded-xl border border-line shadow-xs overflow-hidden ${
@@ -3470,10 +3593,11 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
                     <Layers className="w-5 h-5" />
                   </div>
                   <div>
-                    <div className="flex items-center gap-2 text-xs text-ink-soft font-mono font-bold">
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-ink-soft font-mono font-bold">
                       <span>SOP-TEST-08</span>
                       <span>·</span>
                       <span>Bench Fining &amp; CuSO4 Stock #2 (1.0 mg/mL)</span>
+                      {renderSopCompatBadge('sop-08')}
                     </div>
                     <h3 className="font-bold text-sm sm:text-base text-ink mt-0.5">
                       ۸. تست سریالی فینینگ بنتونیت و محاسبه‌گر محلول استوک سولفات مس (حذف H2S)
@@ -3734,6 +3858,7 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
                 {/* BOTTOM HALF: Collapsible SOP */}
                 {expandedTests['sop-08'] && (
                   <div className="pt-4 border-t border-stone-200 space-y-3 text-xs">
+                    {renderSopFallbackBox('sop-08')}
                     <div className="p-3.5 bg-indigo-50/60 rounded-xl border border-indigo-200 space-y-1.5">
                       <h4 className="font-bold text-indigo-950">پروتکل تست سریالی بنتونیت و تست ۴ لیوانی مس/اسکوربیک:</h4>
                       <p className="text-stone-800 leading-relaxed">
@@ -3752,7 +3877,7 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
           {/* ----------------------------------------------------------------- */}
           {/* TOOL 9 (SOP-09): Batch Mass & Volume Scaling Calculator (400kg)   */}
           {/* ----------------------------------------------------------------- */}
-          {(selectedFilter === 'all' || selectedFilter === 'sop-09') && (
+          {shouldShowSopCard('sop-09') && (
             <div
               id="lab-test-card-sop-09"
               className={`bg-surface rounded-xl border border-line shadow-xs overflow-hidden ${
@@ -3767,10 +3892,11 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
                     <Scale className="w-5 h-5" />
                   </div>
                   <div>
-                    <div className="flex items-center gap-2 text-xs text-ink-soft font-mono font-bold">
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-ink-soft font-mono font-bold">
                       <span>SOP-TEST-09</span>
                       <span>·</span>
                       <span>مبنای مرجع: ۴۰۰ کیلوگرم انگور دست‌چین رشه سردشت</span>
+                      {renderSopCompatBadge('sop-09')}
                     </div>
                     <h3 className="font-bold text-sm sm:text-base text-ink mt-0.5">
                       ۹. موازنه مهندسی جرم و حجم و مقیاس‌پذیری بچ (Batch Mass &amp; Volume Scaling)
@@ -3946,6 +4072,7 @@ export const TestingGuide: React.FC<TestingGuideProps> = ({
                 {/* BOTTOM HALF: Collapsible Reference Balance Table */}
                 {expandedTests['sop-09'] && (
                   <div className="pt-4 border-t border-stone-200 space-y-3 text-xs">
+                    {renderSopFallbackBox('sop-09')}
                     <div className="p-3.5 bg-amber-50/70 border border-amber-200 rounded-xl text-stone-800 leading-relaxed">
                       <strong>قاعده طلایی کالیبراسیون حجمی: </strong>
                       {RASHA_PROTOCOL.goldenRule}

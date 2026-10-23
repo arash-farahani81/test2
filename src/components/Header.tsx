@@ -12,7 +12,8 @@ import {
   SunMedium,
   Sparkles,
   MoreHorizontal,
-  Timer
+  Timer,
+  Sliders
 } from 'lucide-react';
 import { enologyDb } from '../db/enologyDatabase.ts';
 import {
@@ -56,6 +57,10 @@ export const Header: React.FC<HeaderProps> = ({
     activeBatchId,
     setActiveBatchId,
     navigateToRoadmapStep,
+    equipmentCapabilities,
+    openEquipmentModal,
+    activeTankYeastStrain,
+    openYeastSelectorModal,
     dataVersion
   } = useEnologyUi();
 
@@ -365,7 +370,7 @@ export const Header: React.FC<HeaderProps> = ({
       ? 'bg-amber-50/80 text-warn border-warn'
       : 'bg-red-50 text-danger border-danger';
 
-  const tankPillOptions: { id: GlobalTankSelection; shortLabel: string; titleFa: string }[] =
+  const rawTankPillOptions: { id: GlobalTankSelection; shortLabel: string; titleFa: string }[] =
     tankCount === 1
       ? [
           { id: 'tank-a', shortLabel: 'الف', titleFa: 'مخزن قرمز (تک‌مخزنه)' },
@@ -377,6 +382,10 @@ export const Header: React.FC<HeaderProps> = ({
           { id: 'tank-rose', shortLabel: 'رُزه', titleFa: 'گالن رُزه (Saignée)' },
           { id: 'both-red', shortLabel: 'هر دو', titleFa: 'هر دو مخزن قرمز (A + B)' }
         ];
+  const tankPillOptions =
+    !equipmentCapabilities.produceRoseSaignee && activeBatch?.targetStyle !== 'rose'
+      ? rawTankPillOptions.filter((opt) => opt.id !== 'tank-rose')
+      : rawTankPillOptions;
 
   const fiveTabsConfig: {
     id: AppFiveTabView;
@@ -516,6 +525,30 @@ export const Header: React.FC<HeaderProps> = ({
                 );
               })}
             </nav>
+
+            {/* Equipment Profile Quick Button */}
+            <button
+              type="button"
+              data-testid="header-equipment-profile-btn"
+              onClick={openEquipmentModal}
+              className="rounded-lg border border-line bg-paper px-2.5 py-1 text-xs font-medium text-ink hover:border-wine inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+              title="تنظیم تجهیزات و موجودی کارگاه"
+            >
+              <Sliders className="w-3.5 h-3.5 text-wine shrink-0" />
+              <span>تجهیزات: {equipmentCapabilities.shortBadgeFa}</span>
+            </button>
+
+            {/* Active Yeast Strain Quick Button */}
+            <button
+              type="button"
+              data-testid="header-yeast-selector-btn"
+              onClick={openYeastSelectorModal}
+              className="rounded-lg border border-line bg-paper px-2.5 py-1 text-xs font-medium text-ink hover:border-wine inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+              title="انتخاب سویه مخمر از دانشنامه ۳۶ سویه جهانی"
+            >
+              <FlaskConical className="w-3.5 h-3.5 text-wine shrink-0" />
+              <span>مخمر: <strong className="ltr-metric">{activeTankYeastStrain.code}</strong></span>
+            </button>
 
             {/* Conditional Backup Status Chip — ONLY shown when Amber or Red */}
             {backupHealth.status !== 'green' && (

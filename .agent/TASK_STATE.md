@@ -24,7 +24,11 @@
 - **Final UX Architecture Step 4**: Question-Based Lab Entry Cards (2×2 grid synced with `InteractiveLabWizardsPanel`), Deep-Link Referral Return Banner (`useEnologyUi().labDeepLink`), and 6 Toggleable Symptom-Based Troubleshooting Chips (`TestingGuide.tsx` + `InteractiveLabWizardsPanel.tsx`).
 - **Final UX Architecture Step 5**: Unified Tank Status Card (3 collapsible rows: Diagnosis, Benchmark with `sugarDepletionPct`, and Kinetic Prediction), 1-Tap Chart Layer Toggles (`نمودار SG و مراحل | نوار دمای کلاهک | بودجه و گیج SO2` in `BandedFermentationChartAndSO2Panel.tsx`), and Streamlined 4-Tab Tank Logbook with direct «بیشتر» Master Protocol checklist shortcut (`FermentationTracker.tsx`).
 - **Final UX Architecture (Steps 1–5: 5-Tab Navigation `امروز | مخزنها | آزمایش | نقشه راه | بیشتر`, Global Tank/Batch/DeepLink/Glossary Context, Safe Empty-Default Unified Bottom Sheet, Question-Based Lab & Symptom Chips, and Unified Tank Status Card + Chart Layer Toggles)**: **100% Completed**.
+- **7 Interactive Cellar & Lab Ideas + Golden 10 Masterpieces**: Living Tank Visual Twin, Interactive Maceration Punch-Down Studio, Sensory Radar & Fault Wheel, Blending & Oak Bench, Cellar Sound & Timer Studio, Smart Refractometer Fermentation Corrector, Cellar Crisis Simulator, plus Golden 10 (`enologyUtils.ts` / `trackingCalculations.ts` / `enologyTroubleshooting.ts` / `enologyDatabase.ts`).
+- **12-Step Equipment-Driven Architecture (CellarEquipmentProfile)**: Full end-to-end dynamic adaptation of database, UI context, First-Launch Equipment Onboarding Wizard, RightNow Action Center, Bottling Readiness Gate, 10-Second Daily Logger, Living Tank Twin, Banded Fermentation Chart, Troubleshooter Engine, Lab Wizards & Testing Guide, 46-Step Process Roadmap, Master Protocol BOM Table, and Batch Onboarding Wizard (**100% Completed**).
+- **36-Strain Global Yeast Bioprocess Engine (Steps 1–6)**: Complete 36-strain database across 9 global brands (`src/data/yeastStrainsData.ts`), per-tank yeast persistence (`selectedYeastByTank`), strain-specific endogenous SO2 ledger accounting, dynamic YAN/SNA scaling, strain-specific thermal thresholds & H2S/malic/lactic diagnostics, interactive `YeastStrainSelectorModal.tsx`, and end-to-end integration across all 5 tabs and Vintage Passport.
 
 ## Next Queue
 1. Luxury Winery Visual Polish & End-to-End QA
+
 

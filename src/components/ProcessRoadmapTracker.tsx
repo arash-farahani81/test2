@@ -38,6 +38,10 @@ import { useLocalStorageState } from '../utils/useLocalStorage.ts';
 import { enologyDb } from '../db/enologyDatabase.ts';
 import { useFlexibleProtocol, type DynamicProtocolPlan } from '../data/masterProtocolConfig.ts';
 import { useEnologyUi } from '../context/EnologyUiContext.tsx';
+import {
+  formatDoseForEquipment,
+  getRoadmapStepEquipmentGuide
+} from '../utils/equipmentAdapterEngine.ts';
 import { getCurrentPersianDateTimeStr } from '../utils/persianDate.ts';
 import { normalizeEnologyNumericInput } from '../utils/enologyUtils.ts';
 import { QuickTenSecondLogModal } from './QuickTenSecondLogModal.tsx';
@@ -324,7 +328,13 @@ export const ProcessRoadmapTracker: React.FC<ProcessRoadmapTrackerProps> = ({
     tankCount,
     roadmapHighlightStepNumber,
     clearRoadmapHighlightStep,
-    notifyDataChanged
+    notifyDataChanged,
+    scalePrecision,
+    equipmentProfile,
+    equipmentCapabilities,
+    openEquipmentModal,
+    activeTankYeastStrain,
+    openYeastSelectorModal
   } = useEnologyUi();
   const { params: flexParams, plan: flexPlan, isModifiedFromIdeal } = useFlexibleProtocol();
   const [showFlexibleCustomizer, setShowFlexibleCustomizer] = useState<boolean>(false);
@@ -472,6 +482,18 @@ export const ProcessRoadmapTracker: React.FC<ProcessRoadmapTrackerProps> = ({
   };
 
   // Day 0 Dynamic Clock Calculations
+  const produceRoseSaignee =
+    equipmentCapabilities.produceRoseSaignee ?? equipmentProfile.producesRoseSaignee;
+  const scalePrecisionGrams = scalePrecision;
+  const [hideDisabledRoseSteps, setHideDisabledRoseSteps] = useState<boolean>(
+    () => !produceRoseSaignee
+  );
+  useEffect(() => {
+    setHideDisabledRoseSteps(!produceRoseSaignee);
+  }, [produceRoseSaignee]);
+
+  const ROSE_SPECIFIC_STEP_NUMBERS = new Set([6, 7, 10]);
+
   const anchorMins = parseTimeToMinutes(anchorTime);
   const saigneeMins = anchorMins + saigneeOffsetHours * 60;
   const enzymeMins = saigneeMins + 15;
@@ -864,6 +886,14 @@ export const ProcessRoadmapTracker: React.FC<ProcessRoadmapTrackerProps> = ({
   };
 
   const filteredSteps = ZERO_TO_HUNDRED_STEPS.filter((step) => {
+    const stepNum = (step as { stepNumber?: number }).stepNumber ?? step.id;
+    if (
+      !produceRoseSaignee &&
+      hideDisabledRoseSteps &&
+      ROSE_SPECIFIC_STEP_NUMBERS.has(stepNum)
+    ) {
+      return false;
+    }
     const matchesPhase = filterPhase === 'all' || step.phaseId === filterPhase;
     const query = searchQuery.trim().toLowerCase();
     const matchesQuery =
@@ -883,6 +913,61 @@ export const ProcessRoadmapTracker: React.FC<ProcessRoadmapTrackerProps> = ({
           <span>{toastMessage}</span>
         </div>
       )}
+
+      {/* Roadmap Equipment Summary Bar */}
+      <div
+        data-testid="roadmap-equipment-summary-bar"
+        className="rounded-2xl border border-line bg-surface p-3 mb-3 flex flex-wrap items-center justify-between gap-2 text-xs"
+      >
+        <div className="flex flex-wrap items-center gap-2 text-ink">
+          <span className="font-bold">
+            نقشه راه منطبق با تجهیزات شما: {equipmentCapabilities.presetTitleFa}
+          </span>
+          <span className="px-2 py-0.5 rounded-lg bg-paper border border-line font-mono text-ink-soft ltr-metric">
+            ظروف سیفون: {equipmentCapabilities.totalRedCarboysCount} ×{' '}
+            {equipmentCapabilities.agingCarboyUnitL}L
+          </span>
+          <span className="px-2 py-0.5 rounded-lg bg-paper border border-line font-mono text-ink-soft ltr-metric">
+            ترازو: {scalePrecisionGrams}g
+          </span>
+          <span className="px-2 py-0.5 rounded-lg bg-paper border border-line font-mono text-wine font-bold ltr-metric">
+            {`مخمر فعال: ${activeTankYeastStrain.code} (YAN ×${activeTankYeastStrain.yanMultiplier})`}
+          </span>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {!produceRoseSaignee && (
+            <button
+              type="button"
+              data-testid="toggle-hide-rose-steps"
+              onClick={() => setHideDisabledRoseSteps((v) => !v)}
+              className={`px-3 py-1.5 rounded-lg border text-xs font-bold transition-colors cursor-pointer ${
+                hideDisabledRoseSteps
+                  ? 'bg-wine text-white border-wine'
+                  : 'bg-paper hover:bg-stone-200/60 text-ink border-line'
+              }`}
+            >
+              {hideDisabledRoseSteps
+                ? 'نمایش گامهای غیرفعال رُزه'
+                : 'مخفی کردن گامهای رُزه سانیه'}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={openYeastSelectorModal}
+            className="px-3 py-1.5 rounded-lg bg-wine text-white text-xs font-bold transition-colors cursor-pointer"
+          >
+            انتخاب مخمر
+          </button>
+          <button
+            type="button"
+            onClick={openEquipmentModal}
+            className="px-3 py-1.5 rounded-lg bg-paper hover:bg-stone-200/60 text-ink border border-line text-xs font-bold transition-colors cursor-pointer"
+          >
+            ویرایش تجهیزات
+          </button>
+        </div>
+      </div>
 
       {/* 5-Stage Connected Phase Stepper Bar at Top (کراش ← تخمیر ← پرس ← پس از تخمیر ← بطری‌گذاری) */}
       <div className="bg-surface border border-line rounded-2xl p-4 sm:p-5 shadow-sm space-y-3">
@@ -1836,6 +1921,33 @@ export const ProcessRoadmapTracker: React.FC<ProcessRoadmapTrackerProps> = ({
                         className="w-full bg-white border border-stone-300 rounded-lg p-1.5 font-mono font-bold text-rose-900"
                         placeholder="6.52g"
                       />
+                      {(() => {
+                        const numericChemG = Number.parseFloat(
+                          String(chemAmount).replace(/[^0-9.]/g, '')
+                        );
+                        if (!Number.isFinite(numericChemG) || numericChemG <= 0) {
+                          return null;
+                        }
+                        const roadmapChemPlan = formatDoseForEquipment({
+                          targetDoseGrams: numericChemG,
+                          compoundNameFa: chemName,
+                          compoundCategory: /kms|سولفیت/i.test(chemName)
+                            ? 'kms'
+                            : /مخمر|fermaid|go-ferm/i.test(chemName)
+                              ? 'fermaid_or_yeast'
+                              : 'general',
+                          profile: equipmentProfile
+                        });
+                        if (roadmapChemPlan.executionMode !== 'stock_syringe') {
+                          return null;
+                        }
+                        return (
+                          <div className="text-xs font-medium text-wine ltr-metric mt-1">
+                            معادل سرنگ استوک (ترازوی {scalePrecisionGrams}g):{' '}
+                            {roadmapChemPlan.primaryDoseTextFa}
+                          </div>
+                        );
+                      })()}
                     </div>
 
                     <div>
@@ -1951,15 +2063,23 @@ export const ProcessRoadmapTracker: React.FC<ProcessRoadmapTrackerProps> = ({
         {/* FULL CHRONOLOGICAL ROADMAP TABLE / LIST */}
         <div className="space-y-2 max-h-[600px] overflow-y-auto pr-1 pt-2">
           {filteredSteps.map((step) => {
+            const stepNum = (step as { stepNumber?: number }).stepNumber ?? step.id;
             const isCompleted = completedSteps.includes(step.id);
             const isActive = step.id === currentStepId;
             const stepTools = getStepLabTools(step.id);
             const stepDynSummary = getDynamicStepDoseSummary(step.id, flexPlan);
+            const stepEquipGuide = getRoadmapStepEquipmentGuide(
+              stepNum,
+              equipmentProfile
+            );
+            const isDisabledRoseStep =
+              !produceRoseSaignee &&
+              ROSE_SPECIFIC_STEP_NUMBERS.has(stepNum);
 
             return (
               <div
                 key={step.id}
-                id={`roadmap-step-card-${step.id}`}
+                id={`roadmap-step-card-${stepNum}`}
                 className={`p-3.5 rounded-xl border transition-all flex flex-col lg:flex-row lg:items-center justify-between gap-3 ${
                   focusedStepHaloNumber === step.id
                     ? 'ring-2 ring-wine bg-wine/5 shadow-md duration-500'
@@ -1987,7 +2107,7 @@ export const ProcessRoadmapTracker: React.FC<ProcessRoadmapTrackerProps> = ({
                   <div className="space-y-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-mono text-xs font-bold text-wine bg-paper border border-line px-2 py-0.5 rounded">
-                        گام {step.id}
+                        گام {stepNum}
                       </span>
                       <h4
                         onClick={() => handleSelectStep(step.id)}
@@ -2000,6 +2120,11 @@ export const ProcessRoadmapTracker: React.FC<ProcessRoadmapTrackerProps> = ({
                           موقعیت فعلی شما
                         </span>
                       )}
+                      {isDisabledRoseStep && (
+                        <span className="text-xs bg-amber-500/15 text-warn border border-amber-500/40 font-bold px-2 py-0.5 rounded-full">
+                          غیرفعال در پروفایل شما (تولید ۱۰۰٪ شراب قرمز بدون سانیه)
+                        </span>
+                      )}
                     </div>
                     <p className="text-xs text-ink-soft leading-relaxed">
                       موقعیت/تریگر: <strong className="text-ink">{step.timeOrTrigger}</strong> • دما: <strong className="text-ink">{step.targetTemp}</strong>
@@ -2010,6 +2135,30 @@ export const ProcessRoadmapTracker: React.FC<ProcessRoadmapTrackerProps> = ({
                     {stepDynSummary && (
                       <div className="text-xs font-bold text-emerald-900 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg inline-block mt-1">
                         مقدار پویا ({flexParams.grapeWeightKg}kg): {stepDynSummary}
+                      </div>
+                    )}
+                    {stepEquipGuide && (
+                      <div
+                        data-testid={`roadmap-step-equip-guide-${stepNum}`}
+                        className="rounded-xl border border-line bg-paper p-3 mt-2.5 text-xs text-ink"
+                      >
+                        <span className="font-bold text-wine">
+                          روش اجرا با تجهیزات کارگاه شما ({stepEquipGuide.badgeFa}):
+                        </span>
+                        <p className="mt-1 text-ink">{stepEquipGuide.instructionFa}</p>
+                        {stepEquipGuide.warningFa && (
+                          <div className="mt-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-ink">
+                            جایگزین علمی ماده ناموجود: {stepEquipGuide.warningFa}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {[13, 14, 16, 17, 19].includes(stepNum) && (
+                      <div
+                        data-testid={`roadmap-step-yeast-note-${stepNum}`}
+                        className="rounded-xl border border-wine/30 bg-paper p-2.5 mt-2 text-xs text-ink"
+                      >
+                        {`پروفایل مخمر انتخابی مخزن (${activeTankYeastStrain.nameFa}): دمای آبرسانی ${activeTankYeastStrain.rehydrationTempC}°C • بازه تخمیر بهینه ${activeTankYeastStrain.tempOptMinC}–${activeTankYeastStrain.tempOptMaxC}°C • ضریب نیتروژن ×${activeTankYeastStrain.yanMultiplier} • گلیسیرین درونزاد ${activeTankYeastStrain.glycerolYieldGL} g/L`}
                       </div>
                     )}
                   </div>

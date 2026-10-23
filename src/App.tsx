@@ -6,6 +6,7 @@ import {
   ChevronLeft,
   Database,
   Eye,
+  FlaskConical,
   Scale,
   Search,
   ShieldCheck,
@@ -22,6 +23,8 @@ import { ProcessRoadmapTracker } from './components/ProcessRoadmapTracker.tsx';
 import { RightNowActionCenter } from './components/RightNowActionCenter.tsx';
 import { QuickTenSecondLogModal } from './components/QuickTenSecondLogModal.tsx';
 import { BatchOnboardingWizardModal } from './components/BatchOnboardingWizardModal.tsx';
+import { EquipmentOnboardingWizardModal } from './components/EquipmentOnboardingWizardModal.tsx';
+import { YeastStrainSelectorModal } from './components/YeastStrainSelectorModal.tsx';
 import { FlexibleProtocolCustomizerBar } from './components/FlexibleProtocolCustomizerBar.tsx';
 import { PhotoDiaryAndVintagePanel } from './components/PhotoDiaryAndVintagePanel.tsx';
 import {
@@ -60,6 +63,14 @@ function AppWorkspace() {
     closeQuickLog,
     isOnboardingOpen,
     closeOnboardingWizard,
+    isEquipmentModalOpen,
+    openEquipmentModal,
+    closeEquipmentModal,
+    isYeastSelectorOpen,
+    openYeastSelectorModal,
+    closeYeastSelectorModal,
+    activeTankYeastStrain,
+    equipmentCapabilities,
     activeBatch,
     dataVersion,
     notifyDataChanged
@@ -223,6 +234,10 @@ function AppWorkspace() {
             notifyDataChanged();
           }}
         />
+        <EquipmentOnboardingWizardModal
+          isOpen={isEquipmentModalOpen}
+          onClose={closeEquipmentModal}
+        />
       </div>
     );
   }
@@ -316,6 +331,42 @@ function AppWorkspace() {
           <div className="space-y-4">
             {moreSubPage === 'menu' ? (
               <div className="max-w-2xl mx-auto bg-surface border border-line rounded-xl divide-y divide-line overflow-hidden">
+                <button
+                  type="button"
+                  onClick={openEquipmentModal}
+                  className="min-h-[60px] px-4 py-3.5 flex items-center justify-between hover:bg-paper/60 transition-colors text-right w-full cursor-pointer bg-wine/5"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <Sliders className="w-5 h-5 text-wine shrink-0" />
+                    <div className="min-w-0">
+                      <div className="text-sm font-bold text-ink">
+                        تجهیزات و موجودی کارگاه من ({equipmentCapabilities.shortBadgeFa})
+                      </div>
+                      <div className="text-xs text-ink-soft mt-0.5 truncate">
+                        تنظیم هیدرومتر/رفراکتومتر، ترازو، سرنگ، کیت‌های آزمایشگاه، نوع مخازن و مواد شیمیایی موجود
+                      </div>
+                    </div>
+                  </div>
+                  <ChevronLeft className="w-4 h-4 text-wine shrink-0" />
+                </button>
+                <button
+                  type="button"
+                  onClick={openYeastSelectorModal}
+                  className="min-h-[60px] px-4 py-3.5 flex items-center justify-between hover:bg-paper/60 transition-colors text-right w-full cursor-pointer bg-wine/5"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <FlaskConical className="w-5 h-5 text-wine shrink-0" />
+                    <div className="min-w-0">
+                      <div className="text-sm font-bold text-ink">
+                        دانشنامه و انتخابگر ۳۶ سویه مخمر جهانی (فعال: {activeTankYeastStrain.code})
+                      </div>
+                      <div className="text-xs text-ink-soft mt-0.5 truncate">
+                        انتخاب سویه مخمر به تفکیک هر مخزن، محاسبه زنده استوکیومتری تغذیه (SNA/YAN)، پیش‌بینی اثر مالیک/لاکتیک و حدود دمایی
+                      </div>
+                    </div>
+                  </div>
+                  <ChevronLeft className="w-4 h-4 text-wine shrink-0" />
+                </button>
                 {[
                   {
                     id: 'protocol-customizer' as const,
@@ -737,6 +788,18 @@ function AppWorkspace() {
           setDataRefreshTick((t) => t + 1);
           notifyDataChanged();
         }}
+      />
+
+      {/* Global Cellar Equipment & Inventory Onboarding Wizard Modal */}
+      <EquipmentOnboardingWizardModal
+        isOpen={isEquipmentModalOpen}
+        onClose={closeEquipmentModal}
+      />
+
+      {/* Global 36-Strain Yeast Encyclopedia & Per-Tank Selector Modal */}
+      <YeastStrainSelectorModal
+        isOpen={isYeastSelectorOpen}
+        onClose={closeYeastSelectorModal}
       />
 
       {/* Footer */}

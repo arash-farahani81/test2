@@ -1263,3 +1263,175 @@ test('Step 2 Prerequisite: structured doseValue, doseUnit, compoundFa, and volum
   assert.equal(pressingA?.compoundFa, 'شراب آب‌آزاد');
 });
 
+test('Step 5 Equipment Adaptation: evaluateRightNowQueue omits tank-rose and saignee-rose when produceRoseSaignee is false and omits tank-b in single_tank mode', () => {
+  const queueNoRoseSingleTank = evaluateRightNowQueue({
+    logs: [],
+    additions: [],
+    activeTankId: 'tank-a',
+    equipmentProfile: {
+      produceRoseSaignee: false,
+      redTankConfiguration: 'single_tank'
+    }
+  });
+
+  const saigneeMilestone = queueNoRoseSingleTank.allMilestones.find(
+    (m) => m.id === 'saignee-rose'
+  );
+  assert.equal(
+    saigneeMilestone,
+    undefined,
+    'saignee-rose milestone must be omitted when produceRoseSaignee is false'
+  );
+
+  const sna1 = queueNoRoseSingleTank.allMilestones.find((m) => m.id === 'sna-1');
+  assert.ok(sna1);
+  assert.equal(sna1.tankRows.length, 1, 'Only tank-a row should be emitted in single_tank + no-rose mode');
+  assert.equal(sna1.tankRows[0].tankId, 'tank-a');
+});
+
+test('Step 5 Equipment Adaptation: evaluateRightNowQueue attaches stockSyringeHintFa when scalePrecisionGrams=1 and attaches reagentSubstitutionWarningFa when bactiless/fermaid_k are missing', () => {
+  const queueHomeEquip = evaluateRightNowQueue({
+    logs: [],
+    additions: [],
+    activeTankId: 'tank-a',
+    equipmentProfile: {
+      scalePrecisionGrams: 1,
+      hasPrecisionScale: false,
+      hasGraduatedSyringes: true,
+      availableReagents: {
+        kms: true,
+        fermaidO: true,
+        fermaidK: false,
+        dap: true,
+        bactiless: false,
+        pecticEnzyme: true,
+        enologicalTannin: true,
+        bentonite: false,
+        potassiumBitartrate: false,
+        ascorbicAcid: false,
+        copperSulfate: false
+      }
+    }
+  });
+
+  const crushKms = queueHomeEquip.allMilestones.find((m) => m.id === 'crush-kms');
+  assert.ok(crushKms);
+  const tankARow = crushKms.tankRows.find((r) => r.tankId === 'tank-a');
+  assert.ok(tankARow?.stockSyringeHintFa, 'crush-kms tank-a row must include stockSyringeHintFa when scalePrecisionGrams=1');
+  assert.ok(tankARow.stockSyringeHintFa.includes('محلول استوک'));
+
+  const sna2 = queueHomeEquip.allMilestones.find((m) => m.id === 'sna-2-dap');
+  assert.ok(sna2?.reagentSubstitutionWarningFa, 'sna-2-dap must include reagentSubstitutionWarningFa when fermaidK is missing');
+
+  const day11 = queueHomeEquip.allMilestones.find((m) => m.id === 'day11-bactiless-kms-lock');
+  assert.ok(day11?.reagentSubstitutionWarningFa, 'day11-bactiless-kms-lock must include reagentSubstitutionWarningFa when bactiless is missing');
+  assert.ok(day11.howToExecuteFa.includes('جایگزین تجهیزات:'));
+});
+
+test('Step 5 Equipment Adaptation: evaluateBottlingReadinessGate verifies free_so2_target via stoichiometric KMS addition in stock_calculation_only mode and auto-passes cold_stabilization in skip_cold_stab mode', () => {
+  const nowMs = Date.now();
+  const stableDryLogs: FermentationLogEntry[] = [
+    {
+      id: 'd1',
+      tankId: 'tank-a',
+      dayNumber: 10,
+      dateTime: '۱۴۰۵/۰۸/۰۴',
+      timestampMs: nowMs - 8 * 24 * 3600 * 1000,
+      stageTitle: 'روز ۱۰',
+      brix: 0,
+      sg: 0.993,
+      tempCap: 16,
+      tempRoom: 15,
+      ph: 3.5,
+      pigeageDone: false,
+      isBenchmark: false
+    },
+    {
+      id: 'd2',
+      tankId: 'tank-a',
+      dayNumber: 14,
+      dateTime: '۱۴۰۵/۰۸/۰۸',
+      timestampMs: nowMs - 4 * 24 * 3600 * 1000,
+      stageTitle: 'روز ۱۴',
+      brix: 0,
+      sg: 0.993,
+      tempCap: 16,
+      tempRoom: 15,
+      ph: 3.5,
+      pigeageDone: false,
+      isBenchmark: false
+    },
+    {
+      id: 'd3',
+      tankId: 'tank-a',
+      dayNumber: 18,
+      dateTime: '۱۴۰۵/۰۸/۱۲',
+      timestampMs: nowMs - 1 * 3600 * 1000,
+      stageTitle: 'روز ۱۸',
+      brix: 0,
+      sg: 0.993,
+      tempCap: 15,
+      tempRoom: 15,
+      ph: 3.5,
+      pigeageDone: false,
+      isBenchmark: false
+    }
+  ];
+
+  const additions: ChemicalAddition[] = [
+    {
+      id: 'bact-1',
+      batchId: 'batch-rasha-1403',
+      tankId: 'tank-a',
+      dayNumber: 11,
+      timestamp: '۱۴۰۵/۰۸/۰۵',
+      stageTitle: 'روز ۱۱',
+      compoundName: 'Bactiless',
+      compoundType: 'bactiless',
+      amount: 28.8,
+      unit: 'g',
+      purpose: 'قفل مالولاکتیک'
+    },
+    {
+      id: 'kms-pre-bot',
+      batchId: 'batch-rasha-1403',
+      tankId: 'tank-a',
+      dayNumber: 18,
+      milestoneId: 'pre-bottling-kms-ascorbic',
+      timestamp: '۱۴۰۵/۰۸/۱۲',
+      stageTitle: 'پیش از بطری',
+      compoundName: 'KMS',
+      compoundType: 'kms',
+      amount: 5.28,
+      unit: 'g',
+      purpose: 'سولفیت بطری‌گذاری'
+    }
+  ];
+
+  const gate = evaluateBottlingReadinessGate({
+    logs: stableDryLogs,
+    additions,
+    labAnalyses: [],
+    tankId: 'tank-a',
+    manualConfirmations: { clarityConfirmed: true },
+    nowMs,
+    equipmentProfile: {
+      densityInstrument: 'none',
+      so2MeasurementMethod: 'stock_calculation_only',
+      hasRipperKit: false,
+      coldStabMethod: 'skip_cold_stab'
+    }
+  });
+
+  const so2Check = gate.blockingItems.find((i) => i.id === 'free_so2_target');
+  assert.equal(so2Check?.status, 'passed', 'free_so2_target must pass via stoichiometric KMS addition when so2MeasurementMethod is stock_calculation_only');
+  assert.equal(gate.allBlockingPassed, true);
+
+  const drynessCheck = gate.blockingItems.find((i) => i.id === 'dryness_stability');
+  assert.ok(drynessCheck?.whyFa.includes('در حالت بدون چگالی‌سنج'));
+
+  const coldStabCheck = gate.advisoryItems.find((i) => i.id === 'cold_stabilization');
+  assert.equal(coldStabCheck?.status, 'passed', 'cold_stabilization must auto-pass when coldStabMethod is skip_cold_stab');
+});
+
+
